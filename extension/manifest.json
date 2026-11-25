@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "文獻庫助手（APA 雙語管理）",
+  "version": "1.0.0",
+  "description": "一鍵收藏網頁與論文至文獻庫、反白右鍵存引用句、自動保存網頁防死鏈快照",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "https://*.supabase.co/*",
+    "https://api.crossref.org/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "存到文獻庫"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

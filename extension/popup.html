@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>存到文獻庫</title>
+  <style>
+    :root {
+      --bg: #f6f5f1;
+      --fg: #1c2430;
+      --primary: #1f3a5f;
+      --border: rgba(0, 0, 0, 0.16);
+      --card: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      width: 360px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    header {
+      background: var(--primary);
+      color: #fff;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 600;
+    }
+    header button {
+      background: rgba(255, 255, 255, 0.16);
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 5px;
+      padding: 3px 8px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .container {
+      padding: 12px 14px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+    }
+    .status-bar {
+      font-size: 11px;
+      padding: 6px 9px;
+      border-radius: 6px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .badge-ok { color: #15803d; font-weight: 600; }
+    .badge-warn { color: #b45309; font-weight: 600; }
+    .connect-box {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 10px;
+      display: none;
+      flex-direction: column;
+      gap: 7px;
+    }
+    .connect-box.open { display: flex; }
+    label {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #374151;
+    }
+    input, select, textarea {
+      width: 100%;
+      padding: 6px 8px;
+      border-radius: 5px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--fg);
+      font-size: 12px;
+      font-family: inherit;
+    }
+    textarea { resize: vertical; }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .doi-row {
+      display: flex;
+      gap: 5px;
+    }
+    .doi-row input { flex: 1; }
+    .btn {
+      border: none;
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: center;
+    }
+    .btn-primary {
+      background: var(--primary);
+      color: #fff;
+    }
+    .btn-primary:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .btn-secondary {
+      background: var(--card);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      font-weight: 500;
+      font-size: 12px;
+      padding: 6px 10px;
+    }
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: normal;
+      flex-direction: row;
+      cursor: pointer;
+    }
+    .checkbox-row input { width: auto; }
+    .msg {
+      font-size: 12px;
+      padding: 7px 9px;
+      border-radius: 6px;
+      display: none;
+    }
+    .msg.ok { display: block; background: #dcfce7; color: #166534; }
+    .msg.err { display: block; background: #fee2e2; color: #991b1b; }
+    .hint {
+      font-size: 11px;
+      color: #6b7280;
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>存到文獻庫</h1>
+    <button id="toggleConnectBtn" type="button">雲端連線設定</button>
+  </header>
+
+  <div class="container">
+    <div class="status-bar">
+      <span id="connStatus" class="badge-warn">尚未連接雲端帳號</span>
+      <a id="openWebLink" href="https://113toast.github.io/Literature_management/" target="_blank" style="color: var(--primary); text-decoration: underline;">開啟網站</a>
+    </div>
+
+    <!-- 雲端連線設定折疊區 -->
+    <div id="connectBox" class="connect-box">
+      <p class="hint">
+        請打開文獻庫網站的「設定」頁面，登入 Google 後點擊<strong>「複製 Chrome 擴充功能連線碼」</strong>，並貼到下方：
+      </p>
+      <textarea id="tokenInput" rows="3" placeholder='貼上 {"supabaseUrl":...} 連線碼'></textarea>
+      <div class="row">
+        <button id="saveConnBtn" type="button" class="btn btn-primary" style="font-size:12px;padding:6px;">儲存並連線</button>
+        <button id="clearConnBtn" type="button" class="btn btn-secondary">清除連線</button>
+      </div>
+    </div>
+
+    <!-- 目標專案 -->
+    <label>
+      儲存至專案
+      <select id="projectSelect">
+        <option value="預設專案">預設專案</option>
+      </select>
+    </label>
+
+    <!-- 類型與年份 -->
+    <div class="row">
+      <label>
+        文獻類型
+        <select id="typeSelect">
+          <option value="website">網頁／公告</option>
+          <option value="journal">期刊論文</option>
+          <option value="thesis">博碩士論文</option>
+          <option value="book">書籍</option>
+        </select>
+      </label>
+      <label>
+        年份
+        <input id="yearInput" type="text" placeholder="2026" />
+      </label>
+    </div>
+
+    <!-- DOI 自動補齊 -->
+    <label>
+      DOI（若網頁有偵測到會自動填入）
+      <div class="doi-row">
+        <input id="doiInput" type="text" placeholder="10.1000/xyz123" />
+        <button id="fetchDoiBtn" type="button" class="btn btn-secondary">補抓書目</button>
+      </div>
+    </label>
+
+    <!-- 標題 -->
+    <label>
+      標題
+      <input id="titleInput" type="text" placeholder="網頁或論文標題" />
+    </label>
+
+    <!-- 作者 -->
+    <label>
+      作者（中文用「、」分隔；英文 Smith, John; Lee, Amy）
+      <input id="authorsInput" type="text" placeholder="王小明、李大華 或機構名稱" />
+    </label>
+
+    <!-- 網站名稱 / 期刊名稱 -->
+    <label id="sourceLabel">
+      網站或機構名稱
+      <input id="sourceInput" type="text" placeholder="例如：衛生福利部" />
+    </label>
+
+    <!-- 網址與存取日期 -->
+    <div class="row">
+      <label>
+        網址
+        <input id="urlInput" type="text" />
+      </label>
+      <label>
+        存取日期
+        <input id="accessDateInput" type="text" />
+      </label>
+    </div>
+
+    <!-- 防死鏈網頁快照 -->
+    <label class="checkbox-row">
+      <input id="snapshotCheck" type="checkbox" checked />
+      <span>同時儲存網頁純文字快照（防原網址失效）</span>
+    </label>
+
+    <div id="msgBox" class="msg"></div>
+
+    <button id="saveBtn" type="button" class="btn btn-primary">儲存至雲端文獻庫</button>
+    <button id="webFallbackBtn" type="button" class="btn btn-secondary">改用網頁版手動新增（免雲端）</button>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
