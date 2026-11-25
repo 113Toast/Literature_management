@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import {
+  Archive,
   BookOpen,
+  ChevronDown,
+  ChevronUp,
   Copy,
   ExternalLink,
   Loader2,
@@ -10,6 +13,7 @@ import {
   StickyNote,
   Table,
   Trash2,
+  UserCheck,
   X,
 } from 'lucide-react';
 import type { Store } from '../store';
@@ -74,6 +78,9 @@ export default function ReferenceDrawer({
   onToast: (msg: string) => void;
 }) {
   const item = store.refs.find((r) => r.id === itemId) || null;
+  const currentProject = item
+    ? store.projects.find((p) => p.id === item.projectId)
+    : undefined;
 
   // AI 摘要自動填入狀態
   const [abstractTxt, setAbstractTxt] = useState('');
@@ -88,11 +95,13 @@ export default function ReferenceDrawer({
   const [notes, setNotes] = useState('');
   const [noteSavedHint, setNoteSavedHint] = useState('');
 
+  // 快照展開狀態
+  const [snapshotOpen, setSnapshotOpen] = useState(false);
+
   // 書目修改表單狀態
   const [draft, setDraft] = useState<Partial<ReferenceItem>>({});
   const [authorsTxt, setAuthorsTxt] = useState('');
 
-  // 切換不同文獻時，同步載入該文獻資料
   useEffect(() => {
     if (!item) return;
     setAbstractTxt('');
@@ -102,11 +111,11 @@ export default function ReferenceDrawer({
     setQuoteNote('');
     setNotes(item.notes || '');
     setNoteSavedHint('');
+    setSnapshotOpen(false);
     setDraft({ ...item });
     setAuthorsTxt(formatAuthorsForInput(item.authors || []));
   }, [item?.id]);
 
-  // 自由筆記停頓 500ms 自動儲存
   useEffect(() => {
     if (!item) return;
     if (notes === (item.notes || '')) return;
@@ -124,6 +133,7 @@ export default function ReferenceDrawer({
   const lang = detectLanguage(item);
   const apa = formatApaReference(item);
   const quotes = item.quotes || [];
+  const members = currentProject?.members || [];
   const setField = (patch: Partial<ReferenceItem>) =>
     setDraft((prev) => ({ ...prev, ...patch }));
 
@@ -207,6 +217,7 @@ export default function ReferenceDrawer({
     store.update(item.id, {
       ...draft,
       title: draft.title.trim(),
+      assignee: draft.assignee?.trim() || undefined,
       authors: parseAuthors(authorsTxt),
     });
     onToast('已更新書目資料');
@@ -239,7 +250,7 @@ export default function ReferenceDrawer({
         onClick={onClose}
       />
 
-      {/* 右側抽屜主體（手機滿版、電腦固定寬度） */}
+      {/* 右側抽屜主體 */}
       <aside className="relative z-50 flex h-full w-full md:w-[520px] flex-col border-l border-black/15 dark:border-white/15 bg-[#f6f5f1] dark:bg-[#14181d] shadow-2xl">
         {/* 頂部標題列 */}
         <div className="flex items-start justify-between gap-3 border-b border-black/10 dark:border-white/10 p-4">
@@ -268,7 +279,7 @@ export default function ReferenceDrawer({
                   rel="noreferrer"
                   className="inline-flex items-center gap-1 underline opacity-80 hover:opacity-100"
                 >
-                  <ExternalLink size="{12}"/>
+                  <ExternalLink size={12} />
                   開啟 PDF
                 </a>
               )}
@@ -276,13 +287,40 @@ export default function ReferenceDrawer({
             <h3 className="mt-1 text-sm font-semibold leading-snug">
               {item.title}
             </h3>
+
+            {/* 小組共編：快速指派負責人 */}
+            <div className="mt-2 flex items-center gap-1.5 text-xs">
+              <UserCheck size={13} className="opacity-65 shrink-0" />
+              <span className="opacity-70 shrink-0">負責人：</span>
+              <input
+                list="project-members-list"
+                className="w-44 rounded border border-black/20 dark:border-white/20 bg-transparent px-2 py-0.5 text-xs"
+                placeholder="輸入或選擇負責組員..."
+                value={item.assignee || ''}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setField({ assignee: val });
+                  store.update(item.id, { assignee: val.trim() || undefined });
+                }}
+              />
+              {members.length > 0 && (
+                <datalist id="project-members-list">
+                  {members.map((m) => (
+                    <option
+                      key={m.user_id}
+                      value={m.user_name || m.user_email || m.user_id}
+                    />
+                  ))}
+                </datalist>
+              )}
+            </div>
           </div>
           <button
             onClick={onClose}
             aria-label="關閉抽屜"
             className="shrink-0 rounded-md p-1.5 opacity-70 hover:bg-black/5 dark:hover:bg-white/10 hover:opacity-100"
           >
-            <X size="{18}"/>
+            <X size={18} />
           </button>
         </div>
 
@@ -292,13 +330,12 @@ export default function ReferenceDrawer({
           <section className="space-y-2.5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-sm font-semibold">
-                <Table size="{15}"/>
+                <Table size={15} />
                 <span>比較矩陣整理</span>
               </div>
               <span className="text-xs opacity-60">貼上摘要可由 AI 自動萃取</span>
             </div>
 
-            {/* AI 摘要輸入盒 */}
             <div className="rounded-lg border border-[#1f3a5f]/25 dark:border-sky-400/25 bg-[#1f3a5f]/[0.03] dark:bg-sky-400/[0.05] p-3 space-y-2">
               <textarea
                 rows={3}
@@ -332,12 +369,12 @@ export default function ReferenceDrawer({
                 >
                   {aiLoading ? (
                     <>
-                      <Loader2 className="animate-spin" size="{13}"/>
+                      <Loader2 className="animate-spin" size={13} />
                       AI 分析中...
                     </>
                   ) : (
                     <>
-                      <Sparkles size="{13}"/>
+                      <Sparkles size={13} />
                       AI 自動填入矩陣
                     </>
                   )}
@@ -350,7 +387,6 @@ export default function ReferenceDrawer({
               )}
             </div>
 
-            {/* 各矩陣欄位（可直接檢視與微調） */}
             <div className="space-y-2 pt-1">
               {store.matrixCols.map((col) => (
                 <div key={col.key}>
@@ -374,7 +410,7 @@ export default function ReferenceDrawer({
           {/* 區塊 2：重點引用句收集 */}
           <section className="space-y-2.5 border-t border-black/10 dark:border-white/10 pt-4">
             <div className="flex items-center gap-1.5 text-sm font-semibold">
-              <Quote size="{15}"/>
+              <Quote size={15} />
               <span>重點引用句（{quotes.length}）</span>
             </div>
 
@@ -397,7 +433,7 @@ export default function ReferenceDrawer({
                   onClick={handleAddQuote}
                   className="shrink-0 inline-flex items-center gap-1 rounded bg-[#1f3a5f] text-white px-3 py-1.5 text-xs"
                 >
-                  <Plus size="{14}"/>
+                  <Plus size={14} />
                   加入
                 </button>
               </div>
@@ -419,7 +455,7 @@ export default function ReferenceDrawer({
                         onClick={() => handleCopyQuoteWithCite(q.text)}
                         className="inline-flex items-center gap-1 rounded border border-black/20 dark:border-white/20 px-2 py-1 hover:bg-black/5 dark:hover:bg-white/10"
                       >
-                        <Copy size="{12}"/>
+                        <Copy size={12} />
                         複製引用句＋出處
                       </button>
                       <button
@@ -427,7 +463,7 @@ export default function ReferenceDrawer({
                         aria-label="刪除引用句"
                         className="opacity-50 hover:opacity-100 text-red-600"
                       >
-                        <Trash2 size="{13}"/>
+                        <Trash2 size={13} />
                       </button>
                     </div>
                   </li>
@@ -440,7 +476,7 @@ export default function ReferenceDrawer({
           <section className="space-y-2 border-t border-black/10 dark:border-white/10 pt-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-sm font-semibold">
-                <StickyNote size="{15}"/>
+                <StickyNote size={15} />
                 <span>閱讀筆記</span>
               </div>
               {noteSavedHint && (
@@ -462,14 +498,38 @@ export default function ReferenceDrawer({
             />
           </section>
 
-          {/* 區塊 4：書目資料與專案歸屬修改 */}
+          {/* 區塊 4：網頁永久快照（防死鏈） */}
+          {item.snapshotText && (
+            <section className="space-y-2 border-t border-black/10 dark:border-white/10 pt-4">
+              <button
+                type="button"
+                onClick={() => setSnapshotOpen(!snapshotOpen)}
+                className="flex w-full items-center justify-between text-left text-sm font-semibold"
+              >
+                <span className="flex items-center gap-1.5">
+                  <Archive size={15} />
+                  <span>網頁永久快照（防死鏈備份）</span>
+                </span>
+                <span className="inline-flex items-center gap-1 text-xs font-normal opacity-70">
+                  {item.snapshotDate ? item.snapshotDate.slice(0, 10) : ''}
+                  {snapshotOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                </span>
+              </button>
+              {snapshotOpen && (
+                <div className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg border border-black/15 dark:border-white/15 bg-black/[0.02] dark:bg-white/[0.03] p-3 text-xs leading-relaxed">
+                  {item.snapshotText}
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* 區塊 5：書目資料與專案歸屬修改 */}
           <section className="space-y-3 border-t border-black/10 dark:border-white/10 pt-4">
             <div className="flex items-center gap-1.5 text-sm font-semibold">
-              <BookOpen size="{15}"/>
+              <BookOpen size={15} />
               <span>書目資料與分類修改</span>
             </div>
 
-            {/* 完整 APA 預覽 */}
             <div className="rounded bg-black/[0.03] dark:bg-white/[0.04] p-2.5 text-xs leading-relaxed">
               <span className="block opacity-60 mb-1">目前 APA 格式預覽：</span>
               <p dangerouslySetInnerHTML={{ __html: apa.html }} />
@@ -484,8 +544,8 @@ export default function ReferenceDrawer({
                   onChange={(e) => setField({ projectId: e.target.value })}
                 >
                   {store.projects.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
+                    <option key={p.id} value={p.id}>
+                      {p.name}
                     </option>
                   ))}
                 </select>
