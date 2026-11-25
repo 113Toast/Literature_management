@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, RotateCcw, Settings2, X } from 'lucide-react';
+import { FileText, Plus, RotateCcw, Settings2, X } from 'lucide-react';
 import type { Store } from '../store';
 import { formatInTextCitation, type ReferenceItem } from '../utils/apaEngine';
 
@@ -41,9 +41,11 @@ function MatrixCell({
 export default function MatrixView({
   items,
   store,
+  onSelect,
 }: {
   items: ReferenceItem[];
   store: Store;
+  onSelect?: (id: string) => void;
 }) {
   const [addingCol, setAddingCol] = useState(false);
   const [newColName, setNewColName] = useState('');
@@ -68,7 +70,9 @@ export default function MatrixView({
     <div>
       {/* 矩陣工具列：新增欄位與管理欄位 */}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs">
-        <span className="opacity-60">點擊格子即可直接編輯，內容會自動儲存</span>
+        <span className="opacity-60">
+          點擊格子即可直接編輯，內容會自動儲存；點左側標題可開筆記
+        </span>
         <div className="flex flex-wrap items-center gap-2">
           {addingCol ? (
             <div className="flex items-center gap-1">
@@ -135,7 +139,7 @@ export default function MatrixView({
         </div>
       </div>
 
-      {/* 手機版管理欄位標籤列（方便在手機上刪除多餘欄位） */}
+      {/* 手機版管理欄位標籤列 */}
       {managingCols && (
         <div className="md:hidden mb-3 flex flex-wrap gap-1.5 rounded-lg border border-black/15 dark:border-white/15 p-2.5 text-xs">
           {store.matrixCols.map((col) => (
@@ -191,12 +195,19 @@ export default function MatrixView({
             {items.map((r) => (
               <tr key={r.id} className="align-top hover:bg-black/[0.015] dark:hover:bg-white/[0.02]">
                 <td className="sticky left-0 z-10 border-r border-black/10 dark:border-white/10 bg-[#f6f5f1] dark:bg-[#14181d] p-2.5">
-                  <div className="font-semibold text-[#1f3a5f] dark:text-sky-300">
-                    {formatInTextCitation(r, 'narrative')}
-                  </div>
-                  <div className="mt-0.5 line-clamp-2 opacity-75" title={r.title}>
-                    {r.title}
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onSelect?.(r.id)}
+                    className="text-left group w-full"
+                  >
+                    <div className="flex items-center justify-between gap-1 font-semibold text-[#1f3a5f] dark:text-sky-300 group-hover:underline">
+                      <span>{formatInTextCitation(r, 'narrative')}</span>
+                      <FileText size={12} className="shrink-0 opacity-50 group-hover:opacity-100" />
+                    </div>
+                    <div className="mt-0.5 line-clamp-2 opacity-75 group-hover:opacity-100" title={r.title}>
+                      {r.title}
+                    </div>
+                  </button>
                 </td>
                 {store.matrixCols.map((col) => (
                   <td
@@ -223,12 +234,20 @@ export default function MatrixView({
             key={r.id}
             className="rounded-lg border border-black/15 dark:border-white/15 p-3 space-y-2.5"
           >
-            <div className="border-b border-black/10 dark:border-white/10 pb-2">
-              <div className="text-xs font-semibold text-[#1f3a5f] dark:text-sky-300">
-                {formatInTextCitation(r, 'narrative')}
+            <button
+              type="button"
+              onClick={() => onSelect?.(r.id)}
+              className="w-full text-left border-b border-black/10 dark:border-white/10 pb-2"
+            >
+              <div className="flex items-center justify-between text-xs font-semibold text-[#1f3a5f] dark:text-sky-300">
+                <span>{formatInTextCitation(r, 'narrative')}</span>
+                <span className="inline-flex items-center gap-1 opacity-75">
+                  <FileText size={12} />
+                  筆記／詳情
+                </span>
               </div>
               <div className="text-sm font-medium mt-0.5">{r.title}</div>
-            </div>
+            </button>
             <div className="space-y-2">
               {store.matrixCols.map((col) => (
                 <div key={col.key}>
