@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, Route, Routes } from 'react-router-dom';
 import { BookMarked, ListChecks, Plus, Settings as Cog } from 'lucide-react';
 import { useStore } from './store';
@@ -9,6 +9,13 @@ import Settings from './pages/Settings';
 export default function App() {
   const store = useStore();
   const [pid, setPid] = useState(store.projects[0]);
+
+  useEffect(() => {
+    if (!store.projects.includes(pid) && store.projects.length > 0) {
+      setPid(store.projects[0]);
+    }
+  }, [store.projects, pid]);
+
   const items = [
     { to: '/', icon: BookMarked, label: '文獻庫' },
     { to: '/check', icon: ListChecks, label: '核對器' },
@@ -36,7 +43,7 @@ export default function App() {
           <Route path="/" element={<Library store={store} pid={pid} />} />
           <Route path="/add" element={<Library store={store} pid={pid} adding />} />
           <Route path="/check" element={<Checker store={store} pid={pid} />} />
-          <Route path="/settings" element={<Settings />} />
+          <Route path="/settings" element={<Settings store={store} />} />
         </Routes>
       </main>
       <nav className="md:hidden fixed bottom-0 inset-x-0 flex justify-around border-t border-black/10 bg-[#f6f5f1] dark:bg-[#14181d] pb-[env(safe-area-inset-bottom)]">
