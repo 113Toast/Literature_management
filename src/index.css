@@ -1,0 +1,4 @@
+@import "tailwindcss";
+body{font-family:"Noto Sans TC",system-ui,sans-serif;background:#f6f5f1;color:#1d232b}
+@media (prefers-color-scheme:dark){body{background:#14181d;color:#e6e9ed}}
+.ref{font-family:"Times New Roman","PMingLiU",serif;padding-left:1.6em;text-indent:-1.6em}
