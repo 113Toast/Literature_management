@@ -17,6 +17,7 @@ function extract(text: string): Cite[] {
 export default function Checker({ store, pid }: { store: Store; pid: string }) {
   const [text, setText] = useState('');
   const [ran, setRan] = useState(false);
+  const projectName = store.projects.find((p) => p.id === pid)?.name || pid;
   const refs = store.refs.filter((r) => r.projectId === pid);
   const cites = extract(text);
   const matches = (c: Cite, r: (typeof refs)[number]) =>
@@ -29,8 +30,8 @@ export default function Checker({ store, pid }: { store: Store; pid: string }) {
   return (
     <div>
       <h2 className="text-xl font-semibold mb-1">內文與文末核對</h2>
-      <p className="text-sm opacity-70 mb-3">貼上草稿，與「{pid}」的文獻比對。</p>
-      <textarea className="w-full h-56 rounded border border-black/20 bg-transparent p-2 text-sm" value={text} onChange={(e) => { setText(e.target.value); setRan(false); }} placeholder="貼上含 (陳大明, 2024)、陳大明（2024）、(Smith et al., 2024) 的段落" />
+      <p className="text-sm opacity-70 mb-3">貼上草稿，與「{projectName}」的文獻比對。</p>
+      <textarea className="w-full h-56 rounded border border-black/20 dark:border-white/20 bg-transparent p-2 text-sm" value={text} onChange={(e) => { setText(e.target.value); setRan(false); }} placeholder="貼上含 (陳大明, 2024)、陳大明（2024）、(Smith et al., 2024) 的段落" />
       <button onClick={() => setRan(true)} className="mt-2 rounded bg-[#1f3a5f] text-white px-4 py-1.5 text-sm">開始核對</button>
       {ran && (
         <div className="mt-5 space-y-4 text-sm">
