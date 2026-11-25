@@ -41,9 +41,10 @@ export interface ReferenceItem {
   status: ReadStatus;
   stanceTags: StanceTag[];
   pdfUrl?: string;
+  hasLocalPdf?: boolean; // 是否已在本機 IndexedDB 儲存 PDF 原檔
   assignee?: string;     // 小組共編：負責閱讀整理的組員名稱
-  snapshotText?: string; // 網頁永久快照純文字（防死鏈）
-  snapshotDate?: string; // 快照擷取時間
+  snapshotText?: string; // 網頁快照或 PDF 萃取全文（供直接閱讀與防死鏈）
+  snapshotDate?: string; // 快照或全文擷取時間
   quotes?: { text: string; note?: string; createdAt: string }[];
   matrix: MatrixFields;
   notes?: string;
