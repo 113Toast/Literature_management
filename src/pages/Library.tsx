@@ -41,6 +41,12 @@ import {
 } from '../utils/pdfStorage';
 import { fetchAndParseUrl } from '../utils/webScraper';
 
+type ViewMode = 'list' | 'matrix';
+type DrawerFocus = 'notes' | 'edit';
+type DrawerState = { id: string; focus: DrawerFocus } | null;
+type NullableString = string | null;
+type NullableFile = File | null;
+
 const STATUS: Record<ReadStatus, string> = {
   unread: '未讀',
   reading: '精讀中',
@@ -85,14 +91,11 @@ export default function Library({
   const currentProject = store.projects.find((p) => p.id === pid);
   const projectName = currentProject?.name || pid;
 
-  const pdfFileRef = useRef<HTMLInputElement null |>(null);
+  const pdfFileRef = useRef<HTMLInputElement>(null);
 
-  const [view, setView] = useState<'list' | 'matrix'>('list');
-  const [drawerState, setDrawerState] = useState<{
-    id: string;
-    focus: 'notes' | 'edit';
-  } | null>(null);
-  const [readerId, setReaderId] = useState<string | null>(null);
+  const [view, setView] = useState<ViewMode>('list');
+  const [drawerState, setDrawerState] = useState<DrawerState>(null);
+  const [readerId, setReaderId] = useState<NullableString>(null);
   const [filterAssignee, setFilterAssignee] = useState<string>('ALL');
   const [open, setOpen] = useState(adding || !!initialUrl);
   const [toast, setToast] = useState('');
@@ -102,7 +105,7 @@ export default function Library({
   const [webUrlInput, setWebUrlInput] = useState(initialUrl);
   const [fetchingWeb, setFetchingWeb] = useState(false);
   const [parsingPdf, setParsingPdf] = useState(false);
-  const [pendingPdfFile, setPendingPdfFile] = useState<File null |>(null);
+  const [pendingPdfFile, setPendingPdfFile] = useState<NullableFile>(null);
   const [extractedFullText, setExtractedFullText] = useState('');
 
   const [d, setD] = useState<Partial<ReferenceItem>>({
@@ -277,6 +280,32 @@ export default function Library({
     </label>
   );
 
+  const listBtnClass =
+    view === 'list'
+      ? 'flex items-center gap-1 rounded px-2.5 py-1 bg-[#1f3a5f] text-white'
+      : 'flex items-center gap-1 rounded px-2.5 py-1 opacity-75 hover:opacity-100';
+  const matrixBtnClass =
+    view === 'matrix'
+      ? 'flex items-center gap-1 rounded px-2.5 py-1 bg-[#1f3a5f] text-white'
+      : 'flex items-center gap-1 rounded px-2.5 py-1 opacity-75 hover:opacity-100';
+  const syncIconClass = store.syncing ? 'animate-spin' : '';
+
+  const handleSelectMatrixItem = (id: string) => {
+    setDrawerState({ id, focus: 'notes' });
+  };
+  const handleOpenReaderFromDrawer = (id: string) => {
+    setReaderId(id);
+  };
+  const handleCloseDrawer = () => {
+    setDrawerState(null);
+  };
+  const handleCloseReader = () => {
+    setReaderId(null);
+  };
+
+  const drawerItemId = drawerState ? drawerState.id : null;
+  const drawerInitialFocus: DrawerFocus = drawerState ? drawerState.focus : 'notes';
+
   return (
     <div>
       {/* 標題與操作列 */}
@@ -286,26 +315,12 @@ export default function Library({
             {projectName}（{list.length}）
           </h2>
           <div className="inline-flex rounded-md border border-black/20 dark:border-white/20 p-0.5 text-xs">
-            <button
-              onClick={() => setView('list')}
-              className={`flex items-center gap-1 rounded px-2.5 py-1 ${
-                view === 'list'
-                  ? 'bg-[#1f3a5f] text-white'
-                  : 'opacity-75 hover:opacity-100'
-              }`}
-            >
-              <List size="{13}"/>
+            <button onClick={() => setView('list')} className={listBtnClass}>
+              <List size="13" />
               清單
             </button>
-            <button
-              onClick={() => setView('matrix')}
-              className={`flex items-center gap-1 rounded px-2.5 py-1 ${
-                view === 'matrix'
-                  ? 'bg-[#1f3a5f] text-white'
-                  : 'opacity-75 hover:opacity-100'
-              }`}
-            >
-              <Table size="{13}"/>
+            <button onClick={() => setView('matrix')} className={matrixBtnClass}>
+              <Table size="13" />
               比較矩陣
             </button>
           </div>
@@ -316,7 +331,7 @@ export default function Library({
             onClick={exportCited}
             className="flex items-center gap-1 rounded border border-black/20 dark:border-white/20 px-3 py-1.5 text-sm"
           >
-            <Download size="{14}"/>
+            <Download size="14" />
             匯出已引用
           </button>
           <button
@@ -333,7 +348,7 @@ export default function Library({
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#1f3a5f]/20 dark:border-sky-400/20 bg-[#1f3a5f]/[0.03] dark:bg-sky-400/[0.05] px-3 py-2 text-xs">
           <div className="flex flex-wrap items-center gap-3">
             <span className="inline-flex items-center gap-1 font-medium">
-              <Users size="{13}"/>
+              <Users size="13" />
               共編成員：{currentProject.members?.length || 1} 人
             </span>
             {currentProject.inviteCode && (
@@ -346,7 +361,7 @@ export default function Library({
                 className="inline-flex items-center gap-1 rounded border border-black/20 dark:border-white/20 bg-white/70 dark:bg-white/10 px-2 py-0.5 font-mono font-semibold"
               >
                 邀請碼：{currentProject.inviteCode}
-                <Copy size="{11}"/>
+                <Copy size="11" />
               </button>
             )}
           </div>
@@ -360,7 +375,7 @@ export default function Library({
             }}
             className="inline-flex items-center gap-1 opacity-80 hover:opacity-100"
           >
-            <RefreshCw ''} 'animate-spin' : ? className="{store.syncing" size="{12}"/>
+            <RefreshCw size="12" className={syncIconClass} />
             {store.syncing ? '同步中...' : '立即同步'}
           </button>
         </div>
@@ -433,19 +448,19 @@ export default function Library({
             >
               {parsingPdf ? (
                 <>
-                  <Loader2 className="animate-spin" size="{13}"/>
+                  <Loader2 className="animate-spin" size="13" />
                   辨識 PDF 中...
                 </>
               ) : (
                 <>
-                  <FileUp size="{13}"/>
+                  <FileUp size="13" />
                   選擇 PDF 檔案
                 </>
               )}
             </button>
           </div>
 
-          {/* 智慧匯入列 2：貼上網頁網址自動抓取（支援博碩士論文網、華藝、政府機關、新聞） */}
+          {/* 智慧匯入列 2：貼上網頁網址自動抓取 */}
           <div className="col-span-2 flex gap-2">
             <input
               className={inp}
@@ -460,9 +475,9 @@ export default function Library({
               className="shrink-0 inline-flex items-center gap-1 rounded border border-black/25 dark:border-white/25 px-3 text-xs font-medium hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-50"
             >
               {fetchingWeb ? (
-                <Loader2 className="animate-spin" size="{13}"/>
+                <Loader2 className="animate-spin" size="13" />
               ) : (
-                <Globe size="{13}"/>
+                <Globe size="13" />
               )}
               抓取網址
             </button>
@@ -586,7 +601,10 @@ export default function Library({
 
       {/* 清單或比較矩陣 */}
       {view === 'matrix' ? (
-        <MatrixView items="{list}" onSelect="{(id)" store="{store}"> setDrawerState({ id, focus: 'notes' })}
+        <MatrixView
+          items={list}
+          store={store}
+          onSelect={handleSelectMatrixItem}
         />
       ) : (
         <>
@@ -627,13 +645,13 @@ export default function Library({
                     )}
                     {r.assignee && (
                       <span className="inline-flex items-center gap-0.5 rounded bg-sky-500/15 text-sky-900 dark:text-sky-200 px-1.5">
-                        <UserCheck size="{11}"/>
+                        <UserCheck size="11" />
                         {r.assignee}
                       </span>
                     )}
                     {(r.hasLocalPdf || r.snapshotText) && (
                       <span className="inline-flex items-center gap-0.5 rounded bg-emerald-500/15 text-emerald-900 dark:text-emerald-200 px-1.5">
-                        <Archive size="{11}"/>
+                        <Archive size="11" />
                         {r.hasLocalPdf ? '已存 PDF' : '可讀全文'}
                       </span>
                     )}
@@ -669,14 +687,14 @@ export default function Library({
                       }`}
                       onClick={() => setReaderId(r.id)}
                     >
-                      <BookOpen size="{12}"/>
+                      <BookOpen size="12" />
                       閱讀內容
                     </button>
                     <button
                       className="flex items-center gap-1 rounded border border-black/20 dark:border-white/20 px-2 py-1 hover:bg-black/5 dark:hover:bg-white/10"
                       onClick={() => setDrawerState({ id: r.id, focus: 'edit' })}
                     >
-                      <Edit3 size="{12}"/>
+                      <Edit3 size="12" />
                       編輯
                     </button>
                     <button
@@ -687,7 +705,7 @@ export default function Library({
                       }`}
                       onClick={() => setDrawerState({ id: r.id, focus: 'notes' })}
                     >
-                      <StickyNote size="{12}"/>
+                      <StickyNote size="12" />
                       筆記／矩陣{quoteCount > 0 ? ` (${quoteCount})` : ''}
                     </button>
                     <button
@@ -697,7 +715,7 @@ export default function Library({
                         copy(c, c, '已複製括弧引用');
                       }}
                     >
-                      <Copy size="{12}"/>
+                      <Copy size="12" />
                       括弧
                     </button>
                     <button
@@ -707,14 +725,14 @@ export default function Library({
                         copy(c, c, '已複製敘述引用');
                       }}
                     >
-                      <Copy size="{12}"/>
+                      <Copy size="12" />
                       敘述
                     </button>
                     <button
                       className="flex items-center gap-1 rounded border border-black/20 dark:border-white/20 px-2 py-1 hover:bg-black/5 dark:hover:bg-white/10"
                       onClick={() => copy(apa.html, apa.plain, '已複製完整 APA')}
                     >
-                      <Copy size="{12}"/>
+                      <Copy size="12" />
                       完整 APA
                     </button>
                     <select
@@ -739,7 +757,7 @@ export default function Library({
                         rel="noreferrer"
                         className="flex items-center gap-1 underline"
                       >
-                        <ExternalLink size="{12}"/>
+                        <ExternalLink size="12" />
                         外部連結
                       </a>
                     )}
@@ -753,7 +771,7 @@ export default function Library({
                         }
                       }}
                     >
-                      <Trash2 size="{14}"/>
+                      <Trash2 size="14" />
                     </button>
                   </div>
                 </li>
@@ -764,14 +782,19 @@ export default function Library({
       )}
 
       {/* 右側詳情與編輯抽屜 */}
-      <ReferenceDrawer 'notes'} initialFocus="{drawerState?.focus" itemId="{drawerState?.id" null} onOpenReader="{(id)" ||> setReaderId(id)}
-        onClose={() => setDrawerState(null)}
+      <ReferenceDrawer
+        itemId={drawerItemId}
+        initialFocus={drawerInitialFocus}
+        onOpenReader={handleOpenReaderFromDrawer}
+        onClose={handleCloseDrawer}
         store={store}
         onToast={say}
       />
 
       {/* 內建文獻閱讀器 */}
-      <ReaderModal itemId="{readerId}" onClose="{()"> setReaderId(null)}
+      <ReaderModal
+        itemId={readerId}
+        onClose={handleCloseReader}
         store={store}
         onToast={say}
       />
