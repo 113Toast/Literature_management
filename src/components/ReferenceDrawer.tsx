@@ -3,9 +3,12 @@ import {
   BookOpen,
   Copy,
   ExternalLink,
+  Loader2,
   Plus,
   Quote,
+  Sparkles,
   StickyNote,
+  Table,
   Trash2,
   X,
 } from 'lucide-react';
@@ -22,6 +25,10 @@ import {
   type ReferenceType,
   type StanceTag,
 } from '../utils/apaEngine';
+import {
+  extractMatrixFromAbstract,
+  getSavedGeminiKey,
+} from '../utils/geminiMatrix';
 
 const STATUS: Record<ReadStatus, string> = {
   unread: '未讀',
@@ -68,6 +75,11 @@ export default function ReferenceDrawer({
 }) {
   const item = store.refs.find((r) => r.id === itemId) || null;
 
+  // AI 摘要自動填入狀態
+  const [abstractTxt, setAbstractTxt] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState('');
+
   // 引用句輸入狀態
   const [quoteText, setQuoteText] = useState('');
   const [quoteNote, setQuoteNote] = useState('');
@@ -83,6 +95,9 @@ export default function ReferenceDrawer({
   // 切換不同文獻時，同步載入該文獻資料
   useEffect(() => {
     if (!item) return;
+    setAbstractTxt('');
+    setAiLoading(false);
+    setAiError('');
     setQuoteText('');
     setQuoteNote('');
     setNotes(item.notes || '');
@@ -105,11 +120,54 @@ export default function ReferenceDrawer({
 
   if (!item) return null;
 
+  const hasApiKey = Boolean(getSavedGeminiKey());
   const lang = detectLanguage(item);
   const apa = formatApaReference(item);
   const quotes = item.quotes || [];
   const setField = (patch: Partial<ReferenceItem>) =>
     setDraft((prev) => ({ ...prev, ...patch }));
+
+  async function handleAiFillMatrix() {
+    if (!item) return;
+    setAiError('');
+    if (!abstractTxt.trim()) {
+      setAiError('請先在上方貼上論文摘要');
+      return;
+    }
+
+    const hasExisting = store.matrixCols.some((c) =>
+      Boolean(item.matrix?.[c.key]?.trim())
+    );
+    if (
+      hasExisting &&
+      !confirm('部分比較矩陣欄位已有內容，要用 AI 產生的結果覆蓋嗎？')
+    ) {
+      return;
+    }
+
+    setAiLoading(true);
+    try {
+      const extracted = await extractMatrixFromAbstract(
+        abstractTxt,
+        store.matrixCols,
+        item.title
+      );
+      const nextMatrix = { ...(item.matrix || {}) };
+      let filledCount = 0;
+      for (const col of store.matrixCols) {
+        if (extracted[col.key]) {
+          nextMatrix[col.key] = extracted[col.key];
+          filledCount++;
+        }
+      }
+      store.update(item.id, { matrix: nextMatrix });
+      onToast(`AI 已自動填入 ${filledCount} 個欄位`);
+    } catch (err) {
+      setAiError((err as Error).message || 'AI 處理失敗');
+    } finally {
+      setAiLoading(false);
+    }
+  }
 
   function handleAddQuote() {
     if (!item) return;
@@ -210,7 +268,7 @@ export default function ReferenceDrawer({
                   rel="noreferrer"
                   className="inline-flex items-center gap-1 underline opacity-80 hover:opacity-100"
                 >
-                  <ExternalLink size={12} />
+                  <ExternalLink size="{12}"/>
                   開啟 PDF
                 </a>
               )}
@@ -224,16 +282,99 @@ export default function ReferenceDrawer({
             aria-label="關閉抽屜"
             className="shrink-0 rounded-md p-1.5 opacity-70 hover:bg-black/5 dark:hover:bg-white/10 hover:opacity-100"
           >
-            <X size={18} />
+            <X size="{18}"/>
           </button>
         </div>
 
         {/* 可捲動內容區 */}
         <div className="flex-1 overflow-y-auto p-4 space-y-6 pb-20">
-          {/* 區塊 1：重點引用句收集 */}
+          {/* 區塊 1：比較矩陣欄位 + Gemini AI 摘要自動填入 */}
           <section className="space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-sm font-semibold">
+                <Table size="{15}"/>
+                <span>比較矩陣整理</span>
+              </div>
+              <span className="text-xs opacity-60">貼上摘要可由 AI 自動萃取</span>
+            </div>
+
+            {/* AI 摘要輸入盒 */}
+            <div className="rounded-lg border border-[#1f3a5f]/25 dark:border-sky-400/25 bg-[#1f3a5f]/[0.03] dark:bg-sky-400/[0.05] p-3 space-y-2">
+              <textarea
+                rows={3}
+                className={inp}
+                placeholder="貼上這篇論文的英文或中文摘要（Abstract），AI 會自動整理並填入下方各欄位..."
+                value={abstractTxt}
+                onChange={(e) => {
+                  setAbstractTxt(e.target.value);
+                  if (aiError) setAiError('');
+                }}
+              />
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                {!hasApiKey ? (
+                  <a
+                    href="#/settings"
+                    onClick={onClose}
+                    className="text-xs text-amber-700 dark:text-amber-400 underline"
+                  >
+                    尚未設定 Gemini API Key，點此前往設定 →
+                  </a>
+                ) : (
+                  <span className="text-xs opacity-60">
+                    將依目前矩陣設定自動填入 {store.matrixCols.length} 個欄位
+                  </span>
+                )}
+                <button
+                  type="button"
+                  disabled={aiLoading}
+                  onClick={handleAiFillMatrix}
+                  className="ml-auto inline-flex items-center gap-1.5 rounded bg-[#1f3a5f] text-white px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+                >
+                  {aiLoading ? (
+                    <>
+                      <Loader2 className="animate-spin" size="{13}"/>
+                      AI 分析中...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size="{13}"/>
+                      AI 自動填入矩陣
+                    </>
+                  )}
+                </button>
+              </div>
+              {aiError && (
+                <p className="text-xs text-red-600 dark:text-red-400">
+                  ⚠ {aiError}
+                </p>
+              )}
+            </div>
+
+            {/* 各矩陣欄位（可直接檢視與微調） */}
+            <div className="space-y-2 pt-1">
+              {store.matrixCols.map((col) => (
+                <div key={col.key}>
+                  <label className="block text-xs font-medium opacity-75 mb-0.5">
+                    {col.label}
+                  </label>
+                  <textarea
+                    rows={2}
+                    className={`${inp} text-xs leading-relaxed`}
+                    placeholder={`輸入${col.label}...`}
+                    value={item.matrix?.[col.key] || ''}
+                    onChange={(e) =>
+                      store.updateMatrix(item.id, col.key, e.target.value)
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* 區塊 2：重點引用句收集 */}
+          <section className="space-y-2.5 border-t border-black/10 dark:border-white/10 pt-4">
             <div className="flex items-center gap-1.5 text-sm font-semibold">
-              <Quote size={15} />
+              <Quote size="{15}"/>
               <span>重點引用句（{quotes.length}）</span>
             </div>
 
@@ -256,7 +397,7 @@ export default function ReferenceDrawer({
                   onClick={handleAddQuote}
                   className="shrink-0 inline-flex items-center gap-1 rounded bg-[#1f3a5f] text-white px-3 py-1.5 text-xs"
                 >
-                  <Plus size={14} />
+                  <Plus size="{14}"/>
                   加入
                 </button>
               </div>
@@ -278,7 +419,7 @@ export default function ReferenceDrawer({
                         onClick={() => handleCopyQuoteWithCite(q.text)}
                         className="inline-flex items-center gap-1 rounded border border-black/20 dark:border-white/20 px-2 py-1 hover:bg-black/5 dark:hover:bg-white/10"
                       >
-                        <Copy size={12} />
+                        <Copy size="{12}"/>
                         複製引用句＋出處
                       </button>
                       <button
@@ -286,7 +427,7 @@ export default function ReferenceDrawer({
                         aria-label="刪除引用句"
                         className="opacity-50 hover:opacity-100 text-red-600"
                       >
-                        <Trash2 size={13} />
+                        <Trash2 size="{13}"/>
                       </button>
                     </div>
                   </li>
@@ -295,11 +436,11 @@ export default function ReferenceDrawer({
             )}
           </section>
 
-          {/* 區塊 2：自由閱讀筆記 */}
-          <section className="space-y-2">
+          {/* 區塊 3：自由閱讀筆記 */}
+          <section className="space-y-2 border-t border-black/10 dark:border-white/10 pt-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-sm font-semibold">
-                <StickyNote size={15} />
+                <StickyNote size="{15}"/>
                 <span>閱讀筆記</span>
               </div>
               {noteSavedHint && (
@@ -321,10 +462,10 @@ export default function ReferenceDrawer({
             />
           </section>
 
-          {/* 區塊 3：書目資料與專案歸屬修改 */}
+          {/* 區塊 4：書目資料與專案歸屬修改 */}
           <section className="space-y-3 border-t border-black/10 dark:border-white/10 pt-4">
             <div className="flex items-center gap-1.5 text-sm font-semibold">
-              <BookOpen size={15} />
+              <BookOpen size="{15}"/>
               <span>書目資料與分類修改</span>
             </div>
 
