@@ -41,6 +41,9 @@ export interface ReferenceItem {
   status: ReadStatus;
   stanceTags: StanceTag[];
   pdfUrl?: string;
+  assignee?: string;     // 小組共編：負責閱讀整理的組員名稱
+  snapshotText?: string; // 網頁永久快照純文字（防死鏈）
+  snapshotDate?: string; // 快照擷取時間
   quotes?: { text: string; note?: string; createdAt: string }[];
   matrix: MatrixFields;
   notes?: string;
@@ -48,6 +51,7 @@ export interface ReferenceItem {
   isRetracted?: boolean;
   isPreprint?: boolean;
   createdAt: string;
+  updatedAt?: string;
 }
 
 /** 偵測是否為中文文獻（標題或第一位作者含中文字元） */
