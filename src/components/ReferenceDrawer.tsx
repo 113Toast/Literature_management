@@ -39,6 +39,9 @@ import {
   savePdfBlob,
 } from '../utils/pdfStorage';
 
+type DrawerFocus = 'notes' | 'edit';
+type NullableString = string | null;
+
 const STATUS: Record<ReadStatus, string> = {
   unread: '未讀',
   reading: '精讀中',
@@ -79,8 +82,8 @@ export default function ReferenceDrawer({
   store,
   onToast,
 }: {
-  itemId: string | null;
-  initialFocus?: 'notes' | 'edit';
+  itemId: NullableString;
+  initialFocus?: DrawerFocus;
   onOpenReader?: (id: string) => void;
   onClose: () => void;
   store: Store;
@@ -91,8 +94,8 @@ export default function ReferenceDrawer({
     ? store.projects.find((p) => p.id === item.projectId)
     : undefined;
 
-  const editSectionRef = useRef<HTMLElement null |>(null);
-  const pdfInputRef = useRef<HTMLInputElement null |>(null);
+  const editSectionRef = useRef<HTMLElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
 
   // AI 摘要自動填入狀態
   const [abstractTxt, setAbstractTxt] = useState('');
@@ -157,6 +160,13 @@ export default function ReferenceDrawer({
   const members = currentProject?.members || [];
   const setField = (patch: Partial<ReferenceItem>) =>
     setDraft((prev) => ({ ...prev, ...patch }));
+
+  function handleOpenReaderClick() {
+    if (!item || !onOpenReader) return;
+    const targetId = item.id;
+    onClose();
+    onOpenReader(targetId);
+  }
 
   async function handleAttachPdf(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -318,13 +328,10 @@ export default function ReferenceDrawer({
               {onOpenReader && (
                 <button
                   type="button"
-                  onClick={() => {
-                    onClose();
-                    onOpenReader(item.id);
-                  }}
+                  onClick={handleOpenReaderClick}
                   className="inline-flex items-center gap-1 rounded bg-[#1f3a5f] text-white px-2 py-0.5 text-xs"
                 >
-                  <BookOpen size="{11}"/>
+                  <BookOpen size="11" />
                   閱讀內容
                 </button>
               )}
@@ -335,7 +342,7 @@ export default function ReferenceDrawer({
                   rel="noreferrer"
                   className="inline-flex items-center gap-1 underline opacity-80 hover:opacity-100"
                 >
-                  <ExternalLink size="{12}"/>
+                  <ExternalLink size="12" />
                   外部 PDF
                 </a>
               )}
@@ -346,7 +353,7 @@ export default function ReferenceDrawer({
 
             {/* 小組共編：快速指派負責人 */}
             <div className="mt-2 flex items-center gap-1.5 text-xs">
-              <UserCheck className="opacity-65 shrink-0" size="{13}"/>
+              <UserCheck className="opacity-65 shrink-0" size="13" />
               <span className="opacity-70 shrink-0">負責人：</span>
               <input
                 list="project-members-list"
@@ -376,20 +383,20 @@ export default function ReferenceDrawer({
             aria-label="關閉抽屜"
             className="shrink-0 rounded-md p-1.5 opacity-70 hover:bg-black/5 dark:hover:bg-white/10 hover:opacity-100"
           >
-            <X size="{18}"/>
+            <X size="18" />
           </button>
         </div>
 
         {/* 可捲動內容區 */}
         <div className="flex-1 overflow-y-auto p-4 space-y-6 pb-20">
-          {/* 區塊 1：書目資料與專案歸屬修改（置頂或依點擊聚焦，方便隨時修改） */}
+          {/* 區塊 1：書目資料與專案歸屬修改 */}
           <section
             ref={editSectionRef}
             className="space-y-3 rounded-lg border border-black/15 dark:border-white/15 p-3.5"
           >
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-1.5 text-sm font-semibold">
-                <BookOpen size="{15}"/>
+                <BookOpen size="15" />
                 <span>書目資料與分類修改</span>
               </div>
 
@@ -409,12 +416,12 @@ export default function ReferenceDrawer({
                 >
                   {pdfParsing ? (
                     <>
-                      <Loader2 className="animate-spin" size="{12}"/>
+                      <Loader2 className="animate-spin" size="12" />
                       解析中...
                     </>
                   ) : (
                     <>
-                      <FileUp size="{12}"/>
+                      <FileUp size="12" />
                       {item.hasLocalPdf ? '更換 PDF 原檔' : '補傳 PDF 原檔'}
                     </>
                   )}
@@ -542,7 +549,7 @@ export default function ReferenceDrawer({
           <section className="space-y-2.5 border-t border-black/10 dark:border-white/10 pt-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-sm font-semibold">
-                <Table size="{15}"/>
+                <Table size="15" />
                 <span>比較矩陣整理</span>
               </div>
               <span className="text-xs opacity-60">貼上摘要可由 AI 自動萃取</span>
@@ -581,12 +588,12 @@ export default function ReferenceDrawer({
                 >
                   {aiLoading ? (
                     <>
-                      <Loader2 className="animate-spin" size="{13}"/>
+                      <Loader2 className="animate-spin" size="13" />
                       AI 分析中...
                     </>
                   ) : (
                     <>
-                      <Sparkles size="{13}"/>
+                      <Sparkles size="13" />
                       AI 自動填入矩陣
                     </>
                   )}
@@ -622,7 +629,7 @@ export default function ReferenceDrawer({
           {/* 區塊 3：重點引用句收集 */}
           <section className="space-y-2.5 border-t border-black/10 dark:border-white/10 pt-4">
             <div className="flex items-center gap-1.5 text-sm font-semibold">
-              <Quote size="{15}"/>
+              <Quote size="15" />
               <span>重點引用句（{quotes.length}）</span>
             </div>
 
@@ -645,7 +652,7 @@ export default function ReferenceDrawer({
                   onClick={handleAddQuote}
                   className="shrink-0 inline-flex items-center gap-1 rounded bg-[#1f3a5f] text-white px-3 py-1.5 text-xs"
                 >
-                  <Plus size="{14}"/>
+                  <Plus size="14" />
                   加入
                 </button>
               </div>
@@ -665,7 +672,7 @@ export default function ReferenceDrawer({
                         onClick={() => handleCopyQuoteWithCite(q.text)}
                         className="inline-flex items-center gap-1 rounded border border-black/20 dark:border-white/20 px-2 py-1 hover:bg-black/5 dark:hover:bg-white/10"
                       >
-                        <Copy size="{12}"/>
+                        <Copy size="12" />
                         複製引用句＋出處
                       </button>
                       <button
@@ -673,7 +680,7 @@ export default function ReferenceDrawer({
                         aria-label="刪除引用句"
                         className="opacity-50 hover:opacity-100 text-red-600"
                       >
-                        <Trash2 size="{13}"/>
+                        <Trash2 size="13" />
                       </button>
                     </div>
                   </li>
@@ -686,7 +693,7 @@ export default function ReferenceDrawer({
           <section className="space-y-2 border-t border-black/10 dark:border-white/10 pt-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-sm font-semibold">
-                <StickyNote size="{15}"/>
+                <StickyNote size="15" />
                 <span>閱讀筆記</span>
               </div>
               {noteSavedHint && (
@@ -717,15 +724,15 @@ export default function ReferenceDrawer({
                 className="flex w-full items-center justify-between text-left text-sm font-semibold"
               >
                 <span className="flex items-center gap-1.5">
-                  <Archive size="{15}"/>
+                  <Archive size="15" />
                   <span>已存全文／網頁快照</span>
                 </span>
                 <span className="inline-flex items-center gap-1 text-xs font-normal opacity-70">
                   {item.snapshotDate ? item.snapshotDate.slice(0, 10) : ''}
                   {snapshotOpen ? (
-                    <ChevronUp size="{15}"/>
+                    <ChevronUp size="15" />
                   ) : (
-                    <ChevronDown size="{15}"/>
+                    <ChevronDown size="15" />
                   )}
                 </span>
               </button>
