@@ -58,7 +58,6 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
   const auth = await getValidAuth();
   if (!auth) {
-    // 若尚未設定雲端連線，改開啟網頁版帶入資料
     const params = new URLSearchParams({
       url: pageUrl,
       title: pageTitle,
@@ -69,7 +68,6 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 
   try {
-    // 取得目標專案（優先使用上次選的專案，否則取第一個專案）
     const projRes = await fetch(
       `${auth.supabaseUrl}/rest/v1/projects?select=id,name&order=created_at.asc`,
       {
@@ -89,7 +87,6 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     const targetProject = projects.find((p) => p.id === lastProj) || projects[0];
     const now = new Date().toISOString();
 
-    // 檢查該專案是否已經存過同網址的文獻
     const refsRes = await fetch(
       `${auth.supabaseUrl}/rest/v1/lit_references?project_id=eq.${encodeURIComponent(targetProject.id)}&select=id,data`,
       {
@@ -103,7 +100,6 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     const matched = rows.find((r) => r.data && r.data.url === pageUrl);
 
     if (matched) {
-      // 已有此文獻 -> 直接把引用句附加進 quotes 陣列
       const prevQuotes = Array.isArray(matched.data.quotes) ? matched.data.quotes : [];
       const updatedData = {
         ...matched.data,
@@ -131,7 +127,6 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       if (!patchRes.ok) throw new Error('更新引用句失敗');
       flashBadge('+1', '#15803d');
     } else {
-      // 尚未存過此網頁 -> 自動建檔並存入該引用句
       let siteName = '';
       try {
         siteName = new URL(pageUrl).hostname;
