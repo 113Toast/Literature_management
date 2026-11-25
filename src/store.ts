@@ -7,6 +7,15 @@ export interface MatrixColumn {
   isDefault?: boolean;
 }
 
+export interface BackupPayload {
+  app?: string;
+  version?: number;
+  exportedAt?: string;
+  projects?: string[];
+  matrixCols?: MatrixColumn[];
+  refs?: ReferenceItem[];
+}
+
 export const DEFAULT_MATRIX_COLS: MatrixColumn[] = [
   { key: 'target', label: '研究對象', isDefault: true },
   { key: 'sampleSize', label: '樣本數', isDefault: true },
@@ -76,6 +85,71 @@ export function useStore() {
     setMatrixCols(DEFAULT_MATRIX_COLS);
   }, []);
 
+  const importBackup = useCallback(
+    (payload: BackupPayload, mode: 'merge' | 'overwrite'): { addedRefs: number; totalRefs: number } => {
+      if (!payload || !Array.isArray(payload.refs)) {
+        throw new Error('檔案格式不正確，找不到文獻資料（refs）');
+      }
+
+      const incomingRefs: ReferenceItem[] = payload.refs
+        .filter((item) => item && typeof item.title === 'string' && item.title.trim())
+        .map((item) => ({
+          ...item,
+          id: item.id || crypto.randomUUID(),
+          projectId: item.projectId?.trim() || '預設專案',
+          type: item.type || 'journal',
+          title: item.title.trim(),
+          authors: Array.isArray(item.authors) ? item.authors : [],
+          year: item.year ? String(item.year) : '',
+          status: item.status || 'unread',
+          stanceTags: Array.isArray(item.stanceTags) ? item.stanceTags : [],
+          matrix: item.matrix && typeof item.matrix === 'object' ? item.matrix : {},
+          createdAt: item.createdAt || new Date().toISOString(),
+        }));
+
+      const rawProjects = Array.isArray(payload.projects)
+        ? payload.projects.filter((p): p is string => typeof p === 'string' && Boolean(p.trim()))
+        : [];
+      const refProjects = incomingRefs.map((r) => r.projectId);
+      const incomingProjects = Array.from(new Set([...rawProjects, ...refProjects]));
+      if (incomingProjects.length === 0) incomingProjects.push('預設專案');
+
+      const incomingCols: MatrixColumn[] = Array.isArray(payload.matrixCols)
+        ? payload.matrixCols.filter(
+            (c): c is MatrixColumn =>
+              Boolean(c) && typeof c.key === 'string' && typeof c.label === 'string'
+          )
+        : [];
+
+      if (mode === 'overwrite') {
+        setRefs(incomingRefs);
+        setProjects(incomingProjects);
+        if (incomingCols.length > 0) {
+          setMatrixCols(incomingCols);
+        }
+        return { addedRefs: incomingRefs.length, totalRefs: incomingRefs.length };
+      }
+
+      // 合併模式：保留現有資料，僅加入不重複的新文獻、新專案與新欄位
+      const existingIds = new Set(refs.map((r) => r.id));
+      const newRefs = incomingRefs.filter((r) => !existingIds.has(r.id));
+      setRefs((prev) => [...newRefs, ...prev]);
+
+      setProjects((prev) => Array.from(new Set([...prev, ...incomingProjects])));
+
+      if (incomingCols.length > 0) {
+        setMatrixCols((prev) => {
+          const existingKeys = new Set(prev.map((c) => c.key));
+          const extraCols = incomingCols.filter((c) => !existingKeys.has(c.key));
+          return extraCols.length > 0 ? [...prev, ...extraCols] : prev;
+        });
+      }
+
+      return { addedRefs: newRefs.length, totalRefs: refs.length + newRefs.length };
+    },
+    [refs]
+  );
+
   return {
     refs,
     projects,
@@ -88,6 +162,7 @@ export function useStore() {
     addMatrixCol,
     removeMatrixCol,
     resetMatrixCols,
+    importBackup,
   };
 }
 
