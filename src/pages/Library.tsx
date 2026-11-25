@@ -1,10 +1,15 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   Archive,
+  BookOpen,
   Copy,
   Download,
+  Edit3,
   ExternalLink,
+  FileUp,
+  Globe,
   List,
+  Loader2,
   RefreshCw,
   StickyNote,
   Table,
@@ -14,6 +19,7 @@ import {
 } from 'lucide-react';
 import type { Store } from '../store';
 import MatrixView from '../components/MatrixView';
+import ReaderModal from '../components/ReaderModal';
 import ReferenceDrawer from '../components/ReferenceDrawer';
 import {
   copyRichText,
@@ -28,6 +34,12 @@ import {
   type ReferenceType,
   type StanceTag,
 } from '../utils/apaEngine';
+import {
+  deletePdfBlob,
+  extractPdfTextAndMetadata,
+  savePdfBlob,
+} from '../utils/pdfStorage';
+import { fetchAndParseUrl } from '../utils/webScraper';
 
 const STATUS: Record<ReadStatus, string> = {
   unread: '未讀',
@@ -73,12 +85,26 @@ export default function Library({
   const currentProject = store.projects.find((p) => p.id === pid);
   const projectName = currentProject?.name || pid;
 
+  const pdfFileRef = useRef<HTMLInputElement null |>(null);
+
   const [view, setView] = useState<'list' | 'matrix'>('list');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [drawerState, setDrawerState] = useState<{
+    id: string;
+    focus: 'notes' | 'edit';
+  } | null>(null);
+  const [readerId, setReaderId] = useState<string | null>(null);
   const [filterAssignee, setFilterAssignee] = useState<string>('ALL');
   const [open, setOpen] = useState(adding || !!initialUrl);
   const [toast, setToast] = useState('');
+
+  // 自動抓取與 PDF 辨識狀態
   const [doi, setDoi] = useState('');
+  const [webUrlInput, setWebUrlInput] = useState(initialUrl);
+  const [fetchingWeb, setFetchingWeb] = useState(false);
+  const [parsingPdf, setParsingPdf] = useState(false);
+  const [pendingPdfFile, setPendingPdfFile] = useState<File null |>(null);
+  const [extractedFullText, setExtractedFullText] = useState('');
+
   const [d, setD] = useState<Partial<ReferenceItem>>({
     type: initialUrl ? 'website' : 'journal',
     url: initialUrl,
@@ -92,7 +118,7 @@ export default function Library({
   const set = (p: Partial<ReferenceItem>) => setD((x) => ({ ...x, ...p }));
   const say = (m: string) => {
     setToast(m);
-    setTimeout(() => setToast(''), 2000);
+    setTimeout(() => setToast(''), 2200);
   };
 
   const projectRefs = sortReferencesBilingual(
@@ -120,23 +146,72 @@ export default function Library({
           .map((a) => (a.given ? `${a.family}, ${a.given}` : a.family))
           .join('; ')
       );
+      say('已成功抓取 DOI 書目');
     } catch (e) {
       say((e as Error).message);
     }
   }
 
+  async function handleFetchWebUrl() {
+    if (!webUrlInput.trim()) return say('請先貼上網頁網址');
+    setFetchingWeb(true);
+    try {
+      const res = await fetchAndParseUrl(webUrlInput);
+      set(res.metadata);
+      setAuthorsTxt(res.authorsText);
+      if (res.snapshotText) {
+        setExtractedFullText(res.snapshotText);
+      }
+      say(
+        res.detectedSite
+          ? `已自動辨識「${res.detectedSite}」並填入欄位！`
+          : '已自動抓取網頁書目與全文！'
+      );
+    } catch (e) {
+      say((e as Error).message);
+    } finally {
+      setFetchingWeb(false);
+    }
+  }
+
+  async function handlePdfUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    setParsingPdf(true);
+    setPendingPdfFile(file);
+    try {
+      const res = await extractPdfTextAndMetadata(file);
+      set(res.metadata);
+      setAuthorsTxt(res.authorsText);
+      setExtractedFullText(res.fullText);
+      say(res.methodUsed);
+    } catch (err) {
+      say(`PDF 辨識發生問題：${(err as Error).message}`);
+    } finally {
+      setParsingPdf(false);
+    }
+  }
+
   async function save(force = false) {
     if (!draft.title?.trim()) return say('請輸入標題');
+    const newId = crypto.randomUUID();
+    const now = new Date().toISOString();
+
     const newItem: ReferenceItem = {
       ...draft,
-      id: crypto.randomUUID(),
+      id: newId,
       projectId: pid,
+      hasLocalPdf: Boolean(pendingPdfFile),
+      snapshotText: extractedFullText || undefined,
+      snapshotDate: extractedFullText ? now : undefined,
       assignee: draft.assignee?.trim() || undefined,
       quotes: initialQuote
-        ? [{ text: initialQuote, createdAt: new Date().toISOString() }]
+        ? [{ text: initialQuote, createdAt: now }]
         : [],
       matrix: {},
-      createdAt: new Date().toISOString(),
+      createdAt: now,
     } as ReferenceItem;
 
     const res = await store.add(newItem, force);
@@ -150,6 +225,14 @@ export default function Library({
       return;
     }
 
+    if (pendingPdfFile) {
+      try {
+        await savePdfBlob(newId, pendingPdfFile);
+      } catch {
+        // 若儲存空間受限仍保留文字書目
+      }
+    }
+
     setD({
       type: 'journal',
       title: '',
@@ -159,6 +242,9 @@ export default function Library({
     });
     setAuthorsTxt('');
     setDoi('');
+    setWebUrlInput('');
+    setPendingPdfFile(null);
+    setExtractedFullText('');
     setOpen(false);
     say('已儲存文獻');
     if (location.search) history.replaceState(null, '', location.pathname + '#/');
@@ -199,7 +285,6 @@ export default function Library({
           <h2 className="text-xl font-semibold">
             {projectName}（{list.length}）
           </h2>
-          {/* 清單 / 比較矩陣 切換鈕 */}
           <div className="inline-flex rounded-md border border-black/20 dark:border-white/20 p-0.5 text-xs">
             <button
               onClick={() => setView('list')}
@@ -209,7 +294,7 @@ export default function Library({
                   : 'opacity-75 hover:opacity-100'
               }`}
             >
-              <List size={13} />
+              <List size="{13}"/>
               清單
             </button>
             <button
@@ -220,7 +305,7 @@ export default function Library({
                   : 'opacity-75 hover:opacity-100'
               }`}
             >
-              <Table size={13} />
+              <Table size="{13}"/>
               比較矩陣
             </button>
           </div>
@@ -231,7 +316,7 @@ export default function Library({
             onClick={exportCited}
             className="flex items-center gap-1 rounded border border-black/20 dark:border-white/20 px-3 py-1.5 text-sm"
           >
-            <Download size={14} />
+            <Download size="{14}"/>
             匯出已引用
           </button>
           <button
@@ -243,12 +328,12 @@ export default function Library({
         </div>
       </div>
 
-      {/* 小組共編資訊列（僅雲端專案顯示） */}
+      {/* 小組共編資訊列 */}
       {currentProject?.isCloud && (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#1f3a5f]/20 dark:border-sky-400/20 bg-[#1f3a5f]/[0.03] dark:bg-sky-400/[0.05] px-3 py-2 text-xs">
           <div className="flex flex-wrap items-center gap-3">
             <span className="inline-flex items-center gap-1 font-medium">
-              <Users size={13} />
+              <Users size="{13}"/>
               共編成員：{currentProject.members?.length || 1} 人
             </span>
             {currentProject.inviteCode && (
@@ -259,10 +344,9 @@ export default function Library({
                   say(`已複製邀請碼：${currentProject.inviteCode}`);
                 }}
                 className="inline-flex items-center gap-1 rounded border border-black/20 dark:border-white/20 bg-white/70 dark:bg-white/10 px-2 py-0.5 font-mono font-semibold"
-                title="點此複製邀請碼傳給組員"
               >
                 邀請碼：{currentProject.inviteCode}
-                <Copy size={11} />
+                <Copy size="{11}"/>
               </button>
             )}
           </div>
@@ -276,7 +360,7 @@ export default function Library({
             }}
             className="inline-flex items-center gap-1 opacity-80 hover:opacity-100"
           >
-            <RefreshCw size={12} className={store.syncing ? 'animate-spin' : ''} />
+            <RefreshCw ''} 'animate-spin' : ? className="{store.syncing" size="{12}"/>
             {store.syncing ? '同步中...' : '立即同步'}
           </button>
         </div>
@@ -325,20 +409,81 @@ export default function Library({
       {/* 新增文獻表單 */}
       {open && (
         <div className="mb-6 grid grid-cols-2 gap-3 rounded-lg border border-black/15 dark:border-white/15 p-4">
+          {/* 智慧匯入列 1：上傳 PDF 自動辨識 */}
+          <div className="col-span-2 flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed border-[#1f3a5f]/40 dark:border-sky-400/40 bg-[#1f3a5f]/[0.03] dark:bg-sky-400/[0.05] p-2.5 text-xs">
+            <div>
+              <span className="font-semibold">
+                {pendingPdfFile
+                  ? `已選取 PDF：${pendingPdfFile.name}`
+                  : '上傳 PDF 論文／博碩士論文，自動辨識書目並可直接在網站閱讀'}
+              </span>
+            </div>
+            <input
+              ref={pdfFileRef}
+              type="file"
+              accept="application/pdf,.pdf"
+              onChange={handlePdfUpload}
+              className="hidden"
+            />
+            <button
+              type="button"
+              disabled={parsingPdf}
+              onClick={() => pdfFileRef.current?.click()}
+              className="inline-flex items-center gap-1.5 rounded bg-[#1f3a5f] text-white px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+            >
+              {parsingPdf ? (
+                <>
+                  <Loader2 className="animate-spin" size="{13}"/>
+                  辨識 PDF 中...
+                </>
+              ) : (
+                <>
+                  <FileUp size="{13}"/>
+                  選擇 PDF 檔案
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* 智慧匯入列 2：貼上網頁網址自動抓取（支援博碩士論文網、華藝、政府機關、新聞） */}
           <div className="col-span-2 flex gap-2">
             <input
               className={inp}
-              placeholder="貼上 DOI 自動帶入書目"
+              placeholder="貼上網頁網址（支援臺灣博碩士論文網、華藝、政府公告、新聞）"
+              value={webUrlInput}
+              onChange={(e) => setWebUrlInput(e.target.value)}
+            />
+            <button
+              type="button"
+              disabled={fetchingWeb}
+              onClick={handleFetchWebUrl}
+              className="shrink-0 inline-flex items-center gap-1 rounded border border-black/25 dark:border-white/25 px-3 text-xs font-medium hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-50"
+            >
+              {fetchingWeb ? (
+                <Loader2 className="animate-spin" size="{13}"/>
+              ) : (
+                <Globe size="{13}"/>
+              )}
+              抓取網址
+            </button>
+          </div>
+
+          {/* 智慧匯入列 3：DOI 自動抓取 */}
+          <div className="col-span-2 flex gap-2">
+            <input
+              className={inp}
+              placeholder="或貼上論文 DOI 編號自動帶入書目"
               value={doi}
               onChange={(e) => setDoi(e.target.value)}
             />
             <button
               onClick={fetchDoi}
-              className="shrink-0 rounded border border-black/20 px-3 text-sm"
+              className="shrink-0 rounded border border-black/25 dark:border-white/25 px-3 text-xs font-medium hover:bg-black/5 dark:hover:bg-white/10"
             >
-              抓取
+              抓取 DOI
             </button>
           </div>
+
           <label className="text-xs">
             類型
             <select
@@ -353,10 +498,10 @@ export default function Library({
               ))}
             </select>
           </label>
-          {f('year', '年份', '2024')}
+          {f('year', '年份（西元年）', '2025')}
           <div className="col-span-2">{f('title', '標題')}</div>
           <label className="col-span-2 text-xs">
-            作者（中文用「、」分隔；英文「Smith, John; Lee, Amy」）
+            作者／研究生（中文用「、」分隔；英文「Smith, John; Lee, Amy」）
             <input
               className={inp}
               value={authorsTxt}
@@ -380,8 +525,13 @@ export default function Library({
             </>
           )}
           {(d.type === 'thesis' || d.type === 'book') &&
-            f('publisher', d.type === 'thesis' ? '學校系所' : '出版社')}
-          {f('pdfUrl', 'PDF 雲端連結（Google Drive 等）')}
+            f(
+              'publisher',
+              d.type === 'thesis'
+                ? '學校系所（校院名稱＋系所名稱）'
+                : '出版社'
+            )}
+          {f('pdfUrl', '外部 PDF 雲端連結（選填）')}
           {f('assignee', '負責組員（選填）', '例如：王小明')}
           {initialQuote && (
             <p className="col-span-2 rounded bg-black/5 dark:bg-white/10 p-2 text-xs">
@@ -427,7 +577,7 @@ export default function Library({
           )}
           <button
             onClick={() => save(false)}
-            className="col-span-2 rounded bg-[#1f3a5f] text-white py-2 text-sm"
+            className="col-span-2 rounded bg-[#1f3a5f] text-white py-2 text-sm font-medium"
           >
             儲存文獻
           </button>
@@ -436,12 +586,13 @@ export default function Library({
 
       {/* 清單或比較矩陣 */}
       {view === 'matrix' ? (
-        <MatrixView items={list} store={store} onSelect={setSelectedId} />
+        <MatrixView items="{list}" onSelect="{(id)" store="{store}"> setDrawerState({ id, focus: 'notes' })}
+        />
       ) : (
         <>
           {!list.length && !open && (
             <p className="opacity-60 text-sm">
-              目前沒有符合條件的文獻。按「新增文獻」，貼上 DOI 即可開始。
+              目前沒有符合條件的文獻。按「新增文獻」，上傳 PDF 或貼上網址／DOI 即可開始。
             </p>
           )}
           <ul className="space-y-3">
@@ -450,6 +601,9 @@ export default function Library({
               const miss = getMissingFields(r);
               const quoteCount = r.quotes?.length || 0;
               const hasNotes = Boolean(r.notes?.trim());
+              const hasReadableContent = Boolean(
+                r.hasLocalPdf || r.snapshotText || r.pdfUrl
+              );
               return (
                 <li
                   key={r.id}
@@ -473,14 +627,14 @@ export default function Library({
                     )}
                     {r.assignee && (
                       <span className="inline-flex items-center gap-0.5 rounded bg-sky-500/15 text-sky-900 dark:text-sky-200 px-1.5">
-                        <UserCheck size={11} />
+                        <UserCheck size="{11}"/>
                         {r.assignee}
                       </span>
                     )}
-                    {r.snapshotText && (
+                    {(r.hasLocalPdf || r.snapshotText) && (
                       <span className="inline-flex items-center gap-0.5 rounded bg-emerald-500/15 text-emerald-900 dark:text-emerald-200 px-1.5">
-                        <Archive size={11} />
-                        已存快照
+                        <Archive size="{11}"/>
+                        {r.hasLocalPdf ? '已存 PDF' : '可讀全文'}
                       </span>
                     )}
                     {r.stanceTags.map((t) => (
@@ -492,11 +646,50 @@ export default function Library({
                       </span>
                     ))}
                   </div>
-                  <p
-                    className="ref text-sm"
+
+                  {/* 點擊文獻標題可直接開啟閱讀器 */}
+                  <div
+                    onClick={() => setReaderId(r.id)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') setReaderId(r.id);
+                    }}
+                    title="點擊直接閱讀文獻內容"
+                    className="ref text-sm cursor-pointer rounded px-1 -mx-1 hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
                     dangerouslySetInnerHTML={{ __html: apa.html }}
                   />
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+                    <button
+                      className={`flex items-center gap-1 rounded border px-2 py-1 ${
+                        hasReadableContent
+                          ? 'border-[#1f3a5f] bg-[#1f3a5f] text-white'
+                          : 'border-black/20 dark:border-white/20 hover:bg-black/5 dark:hover:bg-white/10'
+                      }`}
+                      onClick={() => setReaderId(r.id)}
+                    >
+                      <BookOpen size="{12}"/>
+                      閱讀內容
+                    </button>
+                    <button
+                      className="flex items-center gap-1 rounded border border-black/20 dark:border-white/20 px-2 py-1 hover:bg-black/5 dark:hover:bg-white/10"
+                      onClick={() => setDrawerState({ id: r.id, focus: 'edit' })}
+                    >
+                      <Edit3 size="{12}"/>
+                      編輯
+                    </button>
+                    <button
+                      className={`flex items-center gap-1 rounded border px-2 py-1 ${
+                        hasNotes || quoteCount > 0
+                          ? 'border-[#1f3a5f]/50 bg-[#1f3a5f]/10 text-[#1f3a5f] dark:border-sky-400/50 dark:bg-sky-400/10 dark:text-sky-300 font-medium'
+                          : 'border-black/20 dark:border-white/20 hover:bg-black/5 dark:hover:bg-white/10'
+                      }`}
+                      onClick={() => setDrawerState({ id: r.id, focus: 'notes' })}
+                    >
+                      <StickyNote size="{12}"/>
+                      筆記／矩陣{quoteCount > 0 ? ` (${quoteCount})` : ''}
+                    </button>
                     <button
                       className="flex items-center gap-1 rounded border border-black/20 dark:border-white/20 px-2 py-1 hover:bg-black/5 dark:hover:bg-white/10"
                       onClick={() => {
@@ -504,8 +697,8 @@ export default function Library({
                         copy(c, c, '已複製括弧引用');
                       }}
                     >
-                      <Copy size={12} />
-                      括弧引用
+                      <Copy size="{12}"/>
+                      括弧
                     </button>
                     <button
                       className="flex items-center gap-1 rounded border border-black/20 dark:border-white/20 px-2 py-1 hover:bg-black/5 dark:hover:bg-white/10"
@@ -514,26 +707,15 @@ export default function Library({
                         copy(c, c, '已複製敘述引用');
                       }}
                     >
-                      <Copy size={12} />
-                      敘述引用
+                      <Copy size="{12}"/>
+                      敘述
                     </button>
                     <button
                       className="flex items-center gap-1 rounded border border-black/20 dark:border-white/20 px-2 py-1 hover:bg-black/5 dark:hover:bg-white/10"
                       onClick={() => copy(apa.html, apa.plain, '已複製完整 APA')}
                     >
-                      <Copy size={12} />
+                      <Copy size="{12}"/>
                       完整 APA
-                    </button>
-                    <button
-                      className={`flex items-center gap-1 rounded border px-2 py-1 ${
-                        hasNotes || quoteCount > 0 || r.snapshotText
-                          ? 'border-[#1f3a5f]/50 bg-[#1f3a5f]/10 text-[#1f3a5f] dark:border-sky-400/50 dark:bg-sky-400/10 dark:text-sky-300 font-medium'
-                          : 'border-black/20 dark:border-white/20 hover:bg-black/5 dark:hover:bg-white/10'
-                      }`}
-                      onClick={() => setSelectedId(r.id)}
-                    >
-                      <StickyNote size={12} />
-                      筆記／詳情{quoteCount > 0 ? ` (${quoteCount})` : ''}
                     </button>
                     <select
                       className="rounded border border-black/20 dark:border-white/20 bg-transparent px-1 py-1"
@@ -557,18 +739,21 @@ export default function Library({
                         rel="noreferrer"
                         className="flex items-center gap-1 underline"
                       >
-                        <ExternalLink size={12} />
-                        PDF
+                        <ExternalLink size="{12}"/>
+                        外部連結
                       </a>
                     )}
                     <button
                       className="ml-auto opacity-60 hover:opacity-100"
                       aria-label="刪除"
-                      onClick={() =>
-                        confirm('刪除這筆文獻？') && store.remove(r.id)
-                      }
+                      onClick={async () => {
+                        if (confirm('刪除這筆文獻？')) {
+                          await deletePdfBlob(r.id).catch(() => {});
+                          store.remove(r.id);
+                        }
+                      }}
                     >
-                      <Trash2 size={14} />
+                      <Trash2 size="{14}"/>
                     </button>
                   </div>
                 </li>
@@ -578,9 +763,15 @@ export default function Library({
         </>
       )}
 
-      <ReferenceDrawer
-        itemId={selectedId}
-        onClose={() => setSelectedId(null)}
+      {/* 右側詳情與編輯抽屜 */}
+      <ReferenceDrawer 'notes'} initialFocus="{drawerState?.focus" itemId="{drawerState?.id" null} onOpenReader="{(id)" ||> setReaderId(id)}
+        onClose={() => setDrawerState(null)}
+        store={store}
+        onToast={say}
+      />
+
+      {/* 內建文獻閱讀器 */}
+      <ReaderModal itemId="{readerId}" onClose="{()"> setReaderId(null)}
         store={store}
         onToast={say}
       />
