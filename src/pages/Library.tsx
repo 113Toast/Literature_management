@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Copy, Download, ExternalLink, List, Table, Trash2 } from 'lucide-react';
+import { Copy, Download, ExternalLink, List, StickyNote, Table, Trash2 } from 'lucide-react';
 import type { Store } from '../store';
 import MatrixView from '../components/MatrixView';
+import ReferenceDrawer from '../components/ReferenceDrawer';
 import {
   copyRichText, fetchMetadataByDOI, formatApaReference, formatInTextCitation, getMissingFields,
   sortReferencesBilingual, type Author, type ReadStatus, type ReferenceItem, type ReferenceType, type StanceTag,
@@ -23,6 +24,7 @@ export default function Library({ store, pid, adding = false }: { store: Store; 
   const q = new URLSearchParams(window.location.search); // PWA share_target 帶入
   const shared = q.get('url') || q.get('text') || '';
   const [view, setView] = useState<'list' | 'matrix'>('list');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [open, setOpen] = useState(adding || !!shared);
   const [toast, setToast] = useState('');
   const [doi, setDoi] = useState('');
@@ -39,7 +41,7 @@ export default function Library({ store, pid, adding = false }: { store: Store; 
     try {
       const m = await fetchMetadataByDOI(doi);
       set(m);
-      setAuthorsTxt((m.authors || []).map((a) => `${a.family}, ${a.given}`).join('; '));
+      setAuthorsTxt((m.authors || []).map((a) => (a.given ? `${a.family}, ${a.given}` : a.family)).join('; '));
     } catch (e) { say((e as Error).message); }
   }
   function save() {
@@ -128,13 +130,16 @@ export default function Library({ store, pid, adding = false }: { store: Store; 
       )}
 
       {view === 'matrix' ? (
-        <MatrixView items={list} store={store} />
+        <MatrixView items={list} store={store} onSelect={setSelectedId} />
       ) : (
         <>
           {!list.length && !open && <p className="opacity-60 text-sm">這個專案還沒有文獻。按「新增文獻」，貼上 DOI 即可開始。</p>}
           <ul className="space-y-3">
             {list.map((r) => {
-              const apa = formatApaReference(r); const miss = getMissingFields(r);
+              const apa = formatApaReference(r);
+              const miss = getMissingFields(r);
+              const quoteCount = r.quotes?.length || 0;
+              const hasNotes = Boolean(r.notes?.trim());
               return (
                 <li key={r.id} className="rounded-lg border border-black/10 dark:border-white/10 p-3">
                   <div className="flex flex-wrap gap-1 mb-1 text-xs">
@@ -145,14 +150,25 @@ export default function Library({ store, pid, adding = false }: { store: Store; 
                   </div>
                   <p className="ref text-sm" dangerouslySetInnerHTML={{ __html: apa.html }} />
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                    <button className="flex items-center gap-1 rounded border border-black/20 px-2 py-1" onClick={() => { const c = formatInTextCitation(r, 'parenthetical'); copy(c, c, '已複製括弧引用'); }}><Copy size={12} />括弧引用</button>
-                    <button className="flex items-center gap-1 rounded border border-black/20 px-2 py-1" onClick={() => { const c = formatInTextCitation(r, 'narrative'); copy(c, c, '已複製敘述引用'); }}><Copy size={12} />敘述引用</button>
-                    <button className="flex items-center gap-1 rounded border border-black/20 px-2 py-1" onClick={() => copy(apa.html, apa.plain, '已複製完整 APA')}><Copy size={12} />完整 APA</button>
-                    <select className="rounded border border-black/20 bg-transparent px-1 py-1" value={r.status} onChange={(e) => store.update(r.id, { status: e.target.value as ReadStatus })}>
+                    <button className="flex items-center gap-1 rounded border border-black/20 dark:border-white/20 px-2 py-1 hover:bg-black/5 dark:hover:bg-white/10" onClick={() => { const c = formatInTextCitation(r, 'parenthetical'); copy(c, c, '已複製括弧引用'); }}><Copy size={12} />括弧引用</button>
+                    <button className="flex items-center gap-1 rounded border border-black/20 dark:border-white/20 px-2 py-1 hover:bg-black/5 dark:hover:bg-white/10" onClick={() => { const c = formatInTextCitation(r, 'narrative'); copy(c, c, '已複製敘述引用'); }}><Copy size={12} />敘述引用</button>
+                    <button className="flex items-center gap-1 rounded border border-black/20 dark:border-white/20 px-2 py-1 hover:bg-black/5 dark:hover:bg-white/10" onClick={() => copy(apa.html, apa.plain, '已複製完整 APA')}><Copy size={12} />完整 APA</button>
+                    <button
+                      className={`flex items-center gap-1 rounded border px-2 py-1 ${
+                        hasNotes || quoteCount > 0
+                          ? 'border-[#1f3a5f]/50 bg-[#1f3a5f]/10 text-[#1f3a5f] dark:border-sky-400/50 dark:bg-sky-400/10 dark:text-sky-300 font-medium'
+                          : 'border-black/20 dark:border-white/20 hover:bg-black/5 dark:hover:bg-white/10'
+                      }`}
+                      onClick={() => setSelectedId(r.id)}
+                    >
+                      <StickyNote size={12} />
+                      筆記／詳情{quoteCount > 0 ? ` (${quoteCount})` : ''}
+                    </button>
+                    <select className="rounded border border-black/20 dark:border-white/20 bg-transparent px-1 py-1" value={r.status} onChange={(e) => store.update(r.id, { status: e.target.value as ReadStatus })}>
                       {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                     </select>
                     {r.pdfUrl && <a href={r.pdfUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 underline"><ExternalLink size={12} />PDF</a>}
-                    <button className="ml-auto opacity-60" aria-label="刪除" onClick={() => confirm('刪除這筆文獻？') && store.remove(r.id)}><Trash2 size={14} /></button>
+                    <button className="ml-auto opacity-60 hover:opacity-100" aria-label="刪除" onClick={() => confirm('刪除這筆文獻？') && store.remove(r.id)}><Trash2 size={14} /></button>
                   </div>
                 </li>
               );
@@ -160,7 +176,16 @@ export default function Library({ store, pid, adding = false }: { store: Store; 
           </ul>
         </>
       )}
-      {toast && <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 rounded bg-black text-white px-3 py-1.5 text-sm">{toast}</div>}
+
+      {/* 右側詳細資訊與筆記抽屜 */}
+      <ReferenceDrawer
+        itemId={selectedId}
+        onClose={() => setSelectedId(null)}
+        store={store}
+        onToast={say}
+      />
+
+      {toast && <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-50 rounded bg-black text-white px-3 py-1.5 text-sm">{toast}</div>}
     </div>
   );
 }
