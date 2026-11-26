@@ -4,12 +4,30 @@ const $ = (id) => document.getElementById(id);
 
 let pageSnapshotText = '';
 let extraJournalMeta = { volume: '', issue: '', pages: '' };
-let activeAuth = null; // { supabaseUrl, supabaseAnonKey, accessToken, refreshToken, userId, email }
+let activeAuth = null;
 
 function showMsg(type, text) {
   const box = $('msgBox');
   box.className = 'msg ' + type;
   box.textContent = text;
+}
+
+function updateSourceLabel(type) {
+  const lbl = $('sourceLabelText');
+  const inp = $('sourceInput');
+  if (type === 'journal') {
+    lbl.textContent = '期刊名稱';
+    inp.placeholder = '例如：臺灣公共衛生雜誌';
+  } else if (type === 'thesis') {
+    lbl.textContent = '學校系所（校院名稱＋系所名稱）';
+    inp.placeholder = '例如：嘉南藥理大學藥學系';
+  } else if (type === 'book') {
+    lbl.textContent = '出版社';
+    inp.placeholder = '例如：五南圖書';
+  } else {
+    lbl.textContent = '網站或機構名稱（若已填為作者可留空）';
+    inp.placeholder = '例如：衛生福利部';
+  }
 }
 
 function parseAuthors(str) {
@@ -30,7 +48,6 @@ async function getValidAuth() {
     return null;
   }
 
-  // 使用 refresh_token 換取最新有效的 access_token
   try {
     const res = await fetch(`${conn.supabaseUrl}/auth/v1/token?grant_type=refresh_token`, {
       method: 'POST',
@@ -40,10 +57,7 @@ async function getValidAuth() {
       },
       body: JSON.stringify({ refresh_token: conn.refreshToken }),
     });
-
-    if (!res.ok) {
-      return null;
-    }
+    if (!res.ok) return null;
 
     const data = await res.json();
     const updated = {
@@ -108,6 +122,9 @@ async function scrapeActiveTab() {
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => {
+        const href = location.href;
+        const host = location.hostname.toLowerCase();
+
         const getMeta = (names) => {
           for (const n of names) {
             const el =
@@ -120,34 +137,258 @@ async function scrapeActiveTab() {
           return '';
         };
 
-        const authorEls = Array.from(document.querySelectorAll('meta[name="citation_author" i]'));
-        const citationAuthors = authorEls
-          .map((el) => el.getAttribute('content')?.trim())
-          .filter(Boolean);
+        const parseYear = (raw) => {
+          if (!raw) return '';
+          const s = String(raw).trim();
+          // 西元 4 位數年份
+          const adMatch = s.match(/\b(19\d{2}|20\d{2})\b/);
+          if (adMatch) return adMatch[1];
+          // 民國年（例如 114、115年、民國114年）
+          const rocMatch = s.match(/(?:民國\s*)?(\d{2,3})\s*(?:年|學年度|[./-]|$)/);
+          if (rocMatch) {
+            const num = parseInt(rocMatch[1], 10);
+            if (num >= 60 && num <= 200) return String(num + 1911);
+          }
+          return '';
+        };
 
-        const doiMeta = getMeta(['citation_doi', 'dc.identifier', 'prism.doi']);
-        let doi = doiMeta;
-        if (!doi) {
-          const bodySnippet = (document.body?.innerText || '').slice(0, 5000);
-          const m = bodySnippet.match(/\b10\.\d{4,9}\/[-._;()/:A-Za-z0-9]+\b/);
-          if (m) doi = m[0].replace(/[.,;)]+$/, '');
-        }
+        const cleanTitleSuffix = (rawTitle) => {
+          if (!rawTitle) return '';
+          return rawTitle
+            .replace(/\s*[-–—|｜::]\s*(臺灣博碩士論文知識加值系統|華藝線上圖書館|Airiti Library|聯合新聞網|自由時報電子報|中時新聞網|中央社\s*CNA|ETtoday新聞雲|風傳媒|關鍵評論網|報導者|衛生福利部.*|全國法規資料庫).*$/i, '')
+            .trim();
+        };
 
         const rawText = (document.body?.innerText || '')
           .replace(/\n{3,}/g, '\n\n')
           .trim()
-          .slice(0, 15000);
+          .slice(0, 20000);
+
+        // ============================================================
+        // 1. 專屬解析：臺灣博碩士論文知識加值系統 (ndltd.ncl.edu.tw)
+        // ============================================================
+        if (host.includes('ndltd.ncl.edu.tw') || document.body?.innerText?.includes('臺灣博碩士論文知識加值系統')) {
+          const fieldMap = {};
+          document.querySelectorAll('tr').forEach((tr) => {
+            const cells = tr.querySelectorAll('th, td');
+            if (cells.length >= 2) {
+              const key = (cells[0].innerText || '').replace(/[:：\s\u00a0]/g, '');
+              const val = (cells[1].innerText || '').trim();
+              if (key && val && !fieldMap[key]) {
+                fieldMap[key] = val;
+              }
+            }
+          });
+
+          // 從純文字逐行備援抓取（避免表格巢狀結構漏抓）
+          const lines = rawText.split('\n').map((l) => l.trim()).filter(Boolean);
+          for (const line of lines) {
+            const m = line.match(/^(論文名稱|研究生|作者|校院名稱|系所名稱|畢業學年度|出版年|學位類別|論文出版年)\s*[:：]\s*(.+)$/);
+            if (m && !fieldMap[m[1]]) {
+              fieldMap[m[1]] = m[2].trim();
+            }
+          }
+
+          let thesisTitle = fieldMap['論文名稱'] || getMeta(['citation_title', 'og:title']) || cleanTitleSuffix(document.title);
+          // 若論文名稱同時包含中文與英文（換行分隔），優先保留中文標題
+          if (thesisTitle.includes('\n')) {
+            const parts = thesisTitle.split('\n').map((x) => x.trim()).filter(Boolean);
+            if (parts.length > 0) thesisTitle = parts[0];
+          }
+
+          const author = (fieldMap['研究生'] || fieldMap['作者'] || getMeta(['citation_author']) || '')
+            .replace(/[\r\n]+/g, '、')
+            .trim();
+          const school = (fieldMap['校院名稱'] || '').trim();
+          const dept = (fieldMap['系所名稱'] || '').trim();
+          const publisher = `${school}${dept}`.trim() || getMeta(['citation_dissertation_institution']);
+          const year = parseYear(fieldMap['出版年'] || fieldMap['論文出版年'] || fieldMap['畢業學年度'] || getMeta(['citation_date']));
+
+          return {
+            detectedSite: '臺灣博碩士論文知識加值系統',
+            type: 'thesis',
+            title: thesisTitle,
+            authors: author,
+            year,
+            source: publisher,
+            volume: '',
+            issue: '',
+            pages: '',
+            doi: '',
+            snapshotText: rawText,
+          };
+        }
+
+        // ============================================================
+        // 2. 專屬解析：華藝線上圖書館 (airitilibrary.com)
+        // ============================================================
+        if (host.includes('airitilibrary.com')) {
+          const authorEls = Array.from(document.querySelectorAll('meta[name="citation_author" i]'));
+          const metaAuthors = authorEls.map((el) => el.getAttribute('content')?.trim()).filter(Boolean);
+
+          const fieldMap = {};
+          document.querySelectorAll('tr, li, div').forEach((el) => {
+            const txt = (el.innerText || '').trim();
+            const m = txt.match(/^(作者|刊名|期刊名稱|卷期頁|出版年|DOI)\s*[:：]\s*(.+)$/);
+            if (m && !fieldMap[m[1]] && m[2].length < 200) {
+              fieldMap[m[1]] = m[2].trim();
+            }
+          });
+
+          const title = getMeta(['citation_title', 'og:title']) || cleanTitleSuffix(document.title);
+          const authors = metaAuthors.length
+            ? metaAuthors.join('；')
+            : (fieldMap['作者'] || '').replace(/[,，;；]/g, '、');
+          const journal = getMeta(['citation_journal_title']) || fieldMap['刊名'] || fieldMap['期刊名稱'] || '';
+          const year = parseYear(getMeta(['citation_publication_date', 'citation_date']) || fieldMap['出版年']);
+          const doi = getMeta(['citation_doi']) || fieldMap['DOI'] || '';
+          const firstPage = getMeta(['citation_firstpage']);
+          const lastPage = getMeta(['citation_lastpage']);
+
+          return {
+            detectedSite: '華藝線上圖書館 (Airiti)',
+            type: 'journal',
+            title,
+            authors,
+            year,
+            source: journal,
+            volume: getMeta(['citation_volume']),
+            issue: getMeta(['citation_issue']),
+            pages: firstPage && lastPage ? `${firstPage}-${lastPage}` : firstPage || '',
+            doi,
+            snapshotText: rawText,
+          };
+        }
+
+        // ============================================================
+        // 3. 解析 JSON-LD 結構化資料（新聞報導、部落格、學術網頁通用）
+        // ============================================================
+        let ldTitle = '';
+        let ldAuthors = [];
+        let ldYear = '';
+        let ldPublisher = '';
+        let ldType = '';
+
+        const scripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
+        const flattenLd = (node) => {
+          if (!node || typeof node !== 'object') return [];
+          if (Array.isArray(node)) return node.flatMap(flattenLd);
+          if (Array.isArray(node['@graph'])) return [node, ...node['@graph'].flatMap(flattenLd)];
+          return [node];
+        };
+
+        for (const s of scripts) {
+          try {
+            const parsed = JSON.parse(s.textContent || '');
+            const items = flattenLd(parsed);
+            for (const item of items) {
+              const t = Array.isArray(item['@type']) ? item['@type'].join(',') : String(item['@type'] || '');
+              if (/Article|NewsArticle|BlogPosting|Report|ScholarlyArticle|Thesis|WebPage/i.test(t)) {
+                if (!ldTitle && (item.headline || item.name)) {
+                  ldTitle = String(item.headline || item.name).trim();
+                }
+                if (!ldYear && (item.datePublished || item.dateCreated || item.dateModified)) {
+                  ldYear = parseYear(item.datePublished || item.dateCreated || item.dateModified);
+                }
+                if (!ldPublisher && item.publisher?.name) {
+                  ldPublisher = String(item.publisher.name).trim();
+                }
+                if (item.author && ldAuthors.length === 0) {
+                  const arr = Array.isArray(item.author) ? item.author : [item.author];
+                  ldAuthors = arr
+                    .map((a) => (typeof a === 'string' ? a : a?.name || ''))
+                    .map((n) => n.trim())
+                    .filter(Boolean);
+                }
+                if (/ScholarlyArticle/i.test(t)) ldType = 'journal';
+                if (/Thesis/i.test(t)) ldType = 'thesis';
+              }
+            }
+          } catch {}
+        }
+
+        // ============================================================
+        // 4. Meta 標籤與一般網頁 / 政府公告 / 新聞 / 部落格備援
+        // ============================================================
+        const citationAuthorEls = Array.from(document.querySelectorAll('meta[name="citation_author" i]'));
+        const citationAuthors = citationAuthorEls
+          .map((el) => el.getAttribute('content')?.trim())
+          .filter(Boolean);
+
+        const metaAuthor = getMeta(['author', 'dc.creator', 'article:author']);
+        let domAuthor = '';
+        if (!citationAuthors.length && !ldAuthors.length && !metaAuthor) {
+          const authorEl = document.querySelector('[rel="author"], .author-name, .article-content__author, .byline');
+          if (authorEl) {
+            domAuthor = (authorEl.textContent || '')
+              .replace(/^(記者|文／|作者：|撰文／)\s*/g, '')
+              .replace(/[／/].*$/, '')
+              .trim();
+            if (domAuthor.length > 25) domAuthor = '';
+          }
+        }
+
+        const doiMeta = getMeta(['citation_doi', 'dc.identifier', 'prism.doi']);
+        let doi = doiMeta;
+        if (!doi) {
+          const bodySnippet = rawText.slice(0, 5000);
+          const m = bodySnippet.match(/\b10\.\d{4,9}\/[-._;()/:A-Za-z0-9]+\b/);
+          if (m) doi = m[0].replace(/[.,;)]+$/, '');
+        }
+
+        const journalTitle = getMeta(['citation_journal_title', 'prism.publicationName']);
+        const rawPageTitle = getMeta(['citation_title', 'og:title']) || ldTitle || document.title || '';
+        const cleanedTitle = cleanTitleSuffix(rawPageTitle);
+        const siteName = getMeta(['og:site_name', 'application-name']) || ldPublisher || location.hostname;
+
+        let year = parseYear(
+          getMeta(['citation_publication_date', 'citation_date', 'article:published_time', 'dc.date', 'pubdate']) ||
+            ldYear
+        );
+        if (!year) {
+          // 從正文前 800 字找發布日期或民國年
+          const headText = rawText.slice(0, 800);
+          const pubMatch = headText.match(/(?:發布日期|刊登日期|更新日期|日期)\s*[:：]?\s*([^\n]{4,20})/);
+          if (pubMatch) year = parseYear(pubMatch[1]);
+          if (!year) year = parseYear(headText);
+        }
+
+        let finalType = ldType || (journalTitle ? 'journal' : 'website');
+        let finalAuthors = citationAuthors.length
+          ? citationAuthors.join('；')
+          : ldAuthors.length
+          ? ldAuthors.join('；')
+          : metaAuthor || domAuthor;
+        let finalSource = journalTitle || siteName;
+        let detectedSite = '';
+
+        // 政府機關網站 (.gov.tw)：若無個人作者，將機關名稱設為作者（符合 APA 7th 機構作者規範）
+        if (host.endsWith('.gov.tw') || host.includes('.gov.tw')) {
+          detectedSite = '政府機關網站';
+          finalType = 'website';
+          if (!finalAuthors && siteName && !siteName.includes('.gov.tw')) {
+            finalAuthors = siteName;
+            finalSource = '';
+          }
+        } else if (journalTitle) {
+          detectedSite = '學術期刊網頁';
+        } else if (ldAuthors.length || domAuthor) {
+          detectedSite = '新聞報導／部落格文章';
+        }
+
+        const firstPage = getMeta(['citation_firstpage']);
+        const lastPage = getMeta(['citation_lastpage']);
 
         return {
-          title: getMeta(['citation_title', 'og:title']) || document.title || '',
-          authors: citationAuthors.length ? citationAuthors.join('; ') : getMeta(['author', 'dc.creator']),
-          date: getMeta(['citation_publication_date', 'citation_date', 'article:published_time', 'dc.date']),
-          journal: getMeta(['citation_journal_title', 'prism.publicationName']),
+          detectedSite,
+          type: finalType,
+          title: cleanedTitle,
+          authors: finalAuthors,
+          year: year || String(new Date().getFullYear()),
+          source: finalSource,
           volume: getMeta(['citation_volume']),
           issue: getMeta(['citation_issue']),
-          firstPage: getMeta(['citation_firstpage']),
-          lastPage: getMeta(['citation_lastpage']),
-          siteName: getMeta(['og:site_name', 'application-name']) || location.hostname,
+          pages: firstPage && lastPage ? `${firstPage}-${lastPage}` : firstPage || '',
           doi,
           snapshotText: rawText,
         };
@@ -157,33 +398,31 @@ async function scrapeActiveTab() {
     const info = results?.[0]?.result;
     if (!info) return;
 
+    if (info.detectedSite) {
+      const badge = $('siteBadge');
+      badge.style.display = 'block';
+      badge.textContent = `已自動辨識來源：${info.detectedSite}`;
+    }
+
+    if (info.type) {
+      $('typeSelect').value = info.type;
+      updateSourceLabel(info.type);
+    }
     if (info.title) $('titleInput').value = info.title;
     if (info.authors) $('authorsInput').value = info.authors;
-    if (info.date) {
-      const yearMatch = info.date.match(/\d{4}/);
-      if (yearMatch) $('yearInput').value = yearMatch[0];
-    } else {
-      $('yearInput').value = String(new Date().getFullYear());
-    }
-    if (info.doi) {
-      $('doiInput').value = info.doi;
-    }
-    if (info.journal) {
-      $('typeSelect').value = 'journal';
-      $('sourceLabel').firstChild.textContent = '期刊名稱';
-      $('sourceInput').value = info.journal;
-      extraJournalMeta = {
-        volume: info.volume || '',
-        issue: info.issue || '',
-        pages: info.firstPage && info.lastPage ? `${info.firstPage}-${info.lastPage}` : info.firstPage || '',
-      };
-    } else if (info.siteName) {
-      $('sourceInput').value = info.siteName;
-    }
+    if (info.year) $('yearInput').value = info.year;
+    if (info.doi) $('doiInput').value = info.doi;
+    $('sourceInput').value = info.source || '';
+
+    extraJournalMeta = {
+      volume: info.volume || '',
+      issue: info.issue || '',
+      pages: info.pages || '',
+    };
 
     pageSnapshotText = info.snapshotText || '';
   } catch {
-    // 部分受保護頁面（如 PDF 檢視器）無法注入腳本，保留基本標題與網址即可
+    // 受保護頁面無法注入腳本時保留基本標題與網址
   }
 }
 
@@ -211,7 +450,7 @@ async function fetchDoiDetails() {
     const year = dateParts?.[0] ? String(dateParts[0]) : '';
 
     $('typeSelect').value = 'journal';
-    $('sourceLabel').firstChild.textContent = '期刊名稱';
+    updateSourceLabel('journal');
     if (title) $('titleInput').value = title;
     if (authors) $('authorsInput').value = authors;
     if (year) $('yearInput').value = year;
@@ -261,7 +500,6 @@ async function saveToCloud() {
   try {
     await chrome.storage.local.set({ lastProjectId: projectId });
 
-    // 先檢查同專案是否已有相同 DOI 或網址
     const checkRes = await fetch(
       `${activeAuth.supabaseUrl}/rest/v1/lit_references?project_id=eq.${encodeURIComponent(projectId)}&select=id,data`,
       {
@@ -352,9 +590,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   $('typeSelect').addEventListener('change', (e) => {
-    const v = e.target.value;
-    $('sourceLabel').firstChild.textContent =
-      v === 'journal' ? '期刊名稱' : v === 'thesis' ? '學校系所' : v === 'book' ? '出版社' : '網站或機構名稱';
+    updateSourceLabel(e.target.value);
   });
 
   $('fetchDoiBtn').addEventListener('click', fetchDoiDetails);
@@ -396,7 +632,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     $('connStatus').textContent = '已清除連線';
   });
 
-  // 初始化檢查連線
   activeAuth = await getValidAuth();
   if (activeAuth) {
     $('connStatus').className = 'badge-ok';
